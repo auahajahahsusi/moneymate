@@ -9,6 +9,9 @@
 <button class="tab" data-tab="history"><span class="nav-ico">⇄</span><span>Операции</span></button>
 <button class="tab" data-tab="goals"><span class="nav-ico">◎</span><span>Цели</span></button>
 <button class="tab" data-tab="payments"><span class="nav-ico">↻</span><span>Платежи</span></button>
+<button class="tab" data-tab="calendar"><span class="nav-ico">▦</span><span>Календарь</span></button>
+<button class="tab" data-tab="wallets"><span class="nav-ico">▣</span><span>Кошельки</span></button>
+<button class="tab" data-tab="limits"><span class="nav-ico">◉</span><span>Лимиты</span></button>
 <button class="tab" data-tab="settings"><span class="nav-ico">◈</span><span>Бюджет</span></button>
 </nav>
 <main>
@@ -21,6 +24,9 @@
 <section id="history" class="panel"><div class="section-kicker">ВСЕ ДВИЖЕНИЯ ДЕНЕГ</div><div class="section-head"><h2>История операций</h2><span class="muted">Последние 300</span></div><div id="transactions" class="stack"><div class="empty card">Операций пока нет</div></div></section>
 <section id="goals" class="panel"><div class="section-kicker">ТВОИ ПЛАНЫ И МЕЧТЫ</div><div class="section-head"><h2>Финансовые цели</h2><button class="small-btn" id="newGoal">＋ Создать</button></div><div id="goalsList" class="stack"><div class="empty card">Создай первую цель накоплений</div></div></section>
 <section id="payments" class="panel"><div class="section-kicker">АВТОМАТИЗИРУЙ СВОИ ФИНАНСЫ</div><div class="section-head"><h2>Регулярные платежи</h2><button class="small-btn" id="newRecurring">＋ Добавить</button></div><p class="muted recurring-note">Наступившие операции автоматически попадут в историю при открытии приложения. Ближайшие даты будут показаны здесь.</p><div id="recurringList" class="stack"><div class="empty card">Регулярных платежей пока нет</div></div></section>
+<section id="calendar" class="panel"><div class="section-kicker">ПЛАНИРУЙ ДЕНЬГИ</div><div class="section-head"><h2>Финансовый календарь</h2></div><label class="card form">Месяц<input id="calendarMonth" type="month"></label><div id="calendarEvents" class="stack"></div></section>
+<section id="wallets" class="panel"><div class="section-kicker">ТВОИ СЧЕТА</div><div class="section-head"><h2>Кошельки</h2><button class="small-btn" id="addWallet">＋ Добавить</button></div><div id="walletList" class="stack"></div><button class="primary" id="exportData">Экспортировать резервную копию JSON</button><p class="muted">Файл содержит твои финансовые данные. Храни его в безопасном месте.</p></section>
+<section id="limits" class="panel"><div class="section-kicker">КОНТРОЛИРУЙ РАСХОДЫ</div><div class="section-head"><h2>Лимиты на месяц</h2><button class="small-btn" id="addLimit">＋ Лимит</button></div><div id="limitList" class="stack"></div></section>
 <section id="settings" class="panel"><div class="section-kicker">ПРАВИЛА ТВОЕГО БЮДЖЕТА</div><div class="section-head"><h2>Настройки бюджета</h2></div><form id="settingsForm" class="card form"><label>Валюта<input id="currency" value="RUB · Российский рубль" disabled></label><label>Необходимое, %<input id="needs" type="number" min="0" max="100" value="50"></label><label>Желания, %<input id="wants" type="number" min="0" max="100" value="30"></label><label>Накопления, %<input id="savings" type="number" min="0" max="100" value="20"></label><p class="muted" id="percentHint">Сумма должна быть равна 100%.</p><button class="primary" type="submit">Сохранить бюджет</button></form></section>
 </main>
 <button class="fab" id="addFab" aria-label="Добавить операцию">＋</button>

@@ -40,6 +40,16 @@ def init_db():
           needs REAL NOT NULL DEFAULT 50, wants REAL NOT NULL DEFAULT 30,
           savings REAL NOT NULL DEFAULT 20
         );
+        CREATE TABLE IF NOT EXISTS wallets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+          name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'cash', balance REAL NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS spending_limits (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+          category TEXT NOT NULL, amount REAL NOT NULL, created_at TEXT NOT NULL,
+          UNIQUE(user_id, category)
+        );
         CREATE TABLE IF NOT EXISTS recurring_payments (
           id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
           kind TEXT NOT NULL CHECK(kind IN ('income','expense')),
@@ -257,6 +267,79 @@ def delete_recurring(payment_id: int, x_telegram_init_data: str = Header(default
     if not cur.rowcount:
         raise HTTPException(404, "Recurring payment not found")
     return {"ok": True}
+
+class WalletIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    kind: str = Field(default="cash", max_length=20)
+    balance: float = Field(default=0, ge=0, le=100000000)
+
+class LimitIn(BaseModel):
+    category: str = Field(min_length=1, max_length=40)
+    amount: float = Field(gt=0, le=100000000)
+
+@app.get("/api/wallets")
+def get_wallets(x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    with db() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM wallets WHERE user_id=? ORDER BY id", (uid,)).fetchall()]
+
+@app.post("/api/wallets")
+def create_wallet(data: WalletIn, x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as c:
+        cur = c.execute("INSERT INTO wallets(user_id,name,kind,balance,created_at) VALUES(?,?,?,?,?)", (uid,data.name.strip(),data.kind,data.balance,now))
+        return dict(c.execute("SELECT * FROM wallets WHERE id=?", (cur.lastrowid,)).fetchone())
+
+@app.delete("/api/wallets/{wallet_id}")
+def remove_wallet(wallet_id: int, x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    with db() as c:
+        cur = c.execute("DELETE FROM wallets WHERE id=? AND user_id=?", (wallet_id,uid))
+    if not cur.rowcount: raise HTTPException(404, "Wallet not found")
+    return {"ok":True}
+
+@app.get("/api/limits")
+def get_limits(x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    month = datetime.now().strftime("%Y-%m")
+    with db() as c:
+        rows = c.execute("SELECT l.*, COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.user_id=l.user_id AND t.category=l.category AND t.kind='expense' AND substr(t.happened_at,1,7)=?),0) spent FROM spending_limits l WHERE l.user_id=? ORDER BY l.category", (month,uid)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/limits")
+def save_limit(data: LimitIn, x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    with db() as c:
+        c.execute("INSERT INTO spending_limits(user_id,category,amount,created_at) VALUES(?,?,?,?) ON CONFLICT(user_id,category) DO UPDATE SET amount=excluded.amount", (uid,data.category.strip(),data.amount,datetime.now(timezone.utc).isoformat()))
+    return {"ok":True}
+
+@app.delete("/api/limits/{limit_id}")
+def delete_limit(limit_id: int, x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    with db() as c:
+        cur = c.execute("DELETE FROM spending_limits WHERE id=? AND user_id=?", (limit_id,uid))
+    if not cur.rowcount: raise HTTPException(404, "Limit not found")
+    return {"ok":True}
+
+@app.get("/api/calendar")
+def calendar_events(month: str = "", x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    if not month: month = datetime.now().strftime("%Y-%m")
+    if len(month)!=7 or month[4]!='-': raise HTTPException(400,"Month must be YYYY-MM")
+    with db() as c:
+        tx = c.execute("SELECT id,kind,amount,category,happened_at AS date,note FROM transactions WHERE user_id=? AND substr(happened_at,1,7)=? ORDER BY happened_at",(uid,month)).fetchall()
+        rp = c.execute("SELECT id,kind,amount,category,next_date AS date,note,frequency FROM recurring_payments WHERE user_id=? AND active=1 AND substr(next_date,1,7)=? ORDER BY next_date",(uid,month)).fetchall()
+    return {"month":month,"events":[dict(r,source="operation") for r in tx]+[dict(r,source="planned") for r in rp]}
+
+@app.get("/api/export")
+def export_data(x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    with db() as c:
+        result={}
+        for table in ("transactions","goals","settings","recurring_payments","wallets","spending_limits"):
+            result[table]=[dict(r) for r in c.execute(f"SELECT * FROM {table} WHERE user_id=?",(uid,)).fetchall()]
+    return {"exported_at":datetime.now(timezone.utc).isoformat(),"currency":"RUB","data":result}
 
 @app.get("/api/settings")
 def get_settings(x_telegram_init_data: str = Header(default="")):

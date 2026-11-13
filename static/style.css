@@ -58,3 +58,6 @@ body{background:
 .status-on{color:var(--green)!important}.status-off{color:var(--red)!important}
 .pill-nav .tab{min-width:0}
 @media(max-width:430px){.pill-nav .tab{flex-direction:column;gap:3px;padding:7px 2px;font-size:9px}.nav-ico{font-size:16px}.recurring-item{gap:7px;padding:10px}.recurring-actions .small-btn{padding:7px 6px;font-size:9px}}
+/* MoneyMate 4.0 additions */
+#calendarMonth{width:100%;margin-top:8px;background:#111c19;color:#f2f7f4;border:1px solid #263a32;border-radius:14px;padding:12px}
+#exportData{margin-top:16px;width:100%}
