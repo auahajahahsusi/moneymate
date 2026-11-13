@@ -1,35 +1,34 @@
-const tg = window.Telegram?.WebApp;
-if (tg) { tg.ready(); tg.expand(); }
-const $ = id => document.getElementById(id);
-let state = {settings:{necessary:50,flexible:30,nonessential:20,currency:"EUR"},entries:[],journal:[]};
-let entryKind = "expense", calc = "0", calcFresh = false;
-const headers = () => ({'Content-Type':'application/json','X-Telegram-Init-Data':tg?.initData || ''});
-async function api(path, options={}) {
-  const r = await fetch(path,{...options,headers:{...headers(),...(options.headers||{})}});
-  if(!r.ok) { const d=await r.json().catch(()=>({})); throw new Error(d.detail||'Не удалось выполнить запрос'); }
-  return r.json();
-}
-function money(n){return new Intl.NumberFormat('ru-RU',{style:'currency',currency:state.settings.currency||'EUR'}).format(n)}
-function totals(){let inc=0,exp=0;state.entries.forEach(e=>e.kind==='income'?inc+=e.amount:exp+=e.amount);return {inc,exp,bal:inc-exp}}
-function render(){
- const t=totals();$('balance').textContent=money(t.bal);$('income').textContent='+'+money(t.inc);$('expenses').textContent='−'+money(t.exp);
- const s=state.settings;
- [['necessary','necessary'],['flexible','flexible'],['nonessential','nonessential']].forEach(([k,id])=>{$(id+'Val').textContent=s[k]+'%';$(id+'Bar').style.width=s[k]+'%'});
- $('entries').innerHTML=state.entries.length?state.entries.slice(0,12).map(e=>`<div class="entry"><div><strong>${esc(e.note||label(e.category))}</strong><small>${label(e.category)} · ${e.created_at||''}</small></div><strong class="${e.kind==='income'?'positive':'negative'}">${e.kind==='income'?'+':'−'}${money(e.amount)}</strong></div>`).join(''):'<div class="empty">Пока нет операций. Добавь первую запись ниже.</div>';
- $('journalEntries').innerHTML=state.journal.map(j=>`<div class="entry"><div><strong>${esc(j.body)}</strong><small>${j.created_at||''}</small></div></div>`).join('')||'<div class="empty">Записей пока нет.</div>';
-}
-function label(k){return ({necessary:'Необходимое',flexible:'Среднее',nonessential:'Необязательное',income:'Доход'})[k]||k}
-function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function refresh(){state=await api('/api/state');render()}
-function toast(msg){if(tg?.showAlert)tg.showAlert(msg);else alert(msg)}
-function openEntry(kind){entryKind=kind;$('modalTitle').textContent=kind==='income'?'Новый доход':'Новый расход';$('category').disabled=kind==='income';$('category').value=kind==='income'?'necessary':'necessary';$('modal').classList.remove('hidden')}
-$('addExpense').onclick=()=>openEntry('expense');$('addIncome').onclick=()=>openEntry('income');
-$('closeModal').onclick=()=>$('modal').classList.add('hidden');
-$('saveEntry').onclick=async()=>{try{const amount=Number($('amount').value);if(!(amount>0))return toast('Введи сумму больше нуля');await api('/api/entry',{method:'POST',body:JSON.stringify({kind:entryKind,category:entryKind==='income'?'income':$('category').value,amount,note:$('note').value})});$('modal').classList.add('hidden');$('amount').value='';$('note').value='';await refresh()}catch(e){toast(e.message)}};
-$('editBudget').onclick=()=>{$('pNecessary').value=state.settings.necessary;$('pFlexible').value=state.settings.flexible;$('pNonessential').value=state.settings.nonessential;$('currency').value=state.settings.currency;$('budgetModal').classList.remove('hidden')};
-$('closeBudget').onclick=()=>$('budgetModal').classList.add('hidden');
-$('saveBudget').onclick=async()=>{try{const d={necessary:+$('pNecessary').value,flexible:+$('pFlexible').value,nonessential:+$('pNonessential').value,currency:$('currency').value};if(d.necessary+d.flexible+d.nonessential!==100) return toast('Сумма процентов должна быть ровно 100%');await api('/api/settings',{method:'POST',body:JSON.stringify(d)});$('budgetModal').classList.add('hidden');await refresh()}catch(e){toast(e.message)}};
-$('saveJournal').onclick=async()=>{try{const body=$('journalText').value.trim();if(!body)return toast('Сначала напиши запись');await api('/api/journal',{method:'POST',body:JSON.stringify({body})});$('journalText').value='';await refresh()}catch(e){toast(e.message)}};
-document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('hidden',x.id!==b.dataset.tab))});
-document.querySelectorAll('[data-key]').forEach(b=>b.onclick=()=>{const k=b.dataset.key;if(k==='C')calc='0';else if(k==='='){try{if(!/^[0-9+*/.() -]+$/.test(calc))throw 0;const result=Function('"use strict";return ('+calc+')')();if(!Number.isFinite(result))throw 0;calc=String(Math.round(result*100000)/100000);calcFresh=true}catch{calc='Ошибка'}}else{if(calcFresh){calc='0';calcFresh=false}calc=calc==='0'&&/[0-9.]/.test(k)?k:calc+k} $('calcDisplay').value=calc});
-refresh().catch(e=>toast(e.message));
+const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();
+const initData=tg?.initData||"";const headers={"Content-Type":"application/json","X-Telegram-Init-Data":initData};
+let kind="expense",currency="RUB",transactions=[],goals=[];
+const $=id=>document.getElementById(id);
+const money=n=>new Intl.NumberFormat("ru-RU",{style:"currency",currency,maximumFractionDigits:2}).format(Number(n||0));
+const today=()=>new Date().toISOString().slice(0,10);
+function notify(msg){$("notice").textContent=msg;$("notice").classList.remove("hidden");setTimeout(()=>$("notice").classList.add("hidden"),5000)}
+async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers,...opts.headers}});let data={};try{data=await r.json()}catch{}if(!r.ok)throw new Error(data.detail||"Ошибка запроса");return data}
+function openModal(id){$(id).classList.remove("hidden")}function closeModal(id){$(id).classList.add("hidden")}
+document.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>closeModal(b.dataset.close));
+document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab,.panel").forEach(x=>x.classList.remove("active"));b.classList.add("active");$(b.dataset.tab).classList.add("active")});
+function showTab(name){document.querySelector(`.tab[data-tab="${name}"]`).click()}
+function renderTransactions(){const el=$("transactions");if(!transactions.length){el.innerHTML='<div class="empty card">Операций пока нет. Нажми ＋, чтобы добавить первую.</div>';return}
+el.innerHTML=transactions.map(t=>`<div class="tx"><div class="tx-icon ${t.kind==='expense'?'out':''}">${t.kind==='income'?'↗':'↘'}</div><div class="tx-main"><b>${esc(t.category)}</b><small>${esc(t.note||t.happened_at)} · ${t.happened_at}</small></div><div class="tx-amount ${t.kind==='expense'?'out':''}">${t.kind==='income'?'+':'−'}${money(t.amount)}</div><button class="delete" data-del="${t.id}" aria-label="Удалить">×</button></div>`).join("");
+el.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(confirm("Удалить эту операцию?")){try{await api(`/api/transactions/${b.dataset.del}`,{method:"DELETE"});await refresh()}catch(e){notify(e.message)}}})}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function renderGoals(){const el=$("goalsList");if(!goals.length){el.innerHTML='<div class="empty card">Создай первую цель накоплений</div>';return}
+el.innerHTML=goals.map(g=>{let p=Math.min(100,g.saved/g.target*100);return `<div class="goal"><div class="goal-top"><div><h3>${esc(g.title)}</h3><p>${g.deadline?'Цель до '+g.deadline:'Накопительная цель'}</p></div><button class="delete" data-gdel="${g.id}">×</button></div><div class="track"><i style="width:${p}%"></i></div><div class="goal-foot"><span>${money(g.saved)} из ${money(g.target)} · ${p.toFixed(0)}%</span><button class="small-btn" data-addgoal="${g.id}">＋ Пополнить</button></div></div>`}).join("");
+el.querySelectorAll("[data-gdel]").forEach(b=>b.onclick=async()=>{if(confirm("Удалить цель?")){try{await api(`/api/goals/${b.dataset.gdel}`,{method:"DELETE"});await refresh()}catch(e){notify(e.message)}}});
+el.querySelectorAll("[data-addgoal]").forEach(b=>b.onclick=()=>{$("contributeId").value=b.dataset.addgoal;openModal("contributeModal")})}
+async function renderSummary(){const s=await api("/api/summary");currency=s.settings.currency||"EUR";$("balance").textContent=money(s.balance);$("income").textContent=money(s.income);$("expense").textContent=money(s.expense);$("monthLabel").textContent=s.month;$("needsPct").textContent=s.settings.needs+"%";$("wantsPct").textContent=s.settings.wants+"%";$("savingsPct").textContent=s.settings.savings+"%";$("needsBar").style.width=s.settings.needs+"%";$("wantsBar").style.width=s.settings.wants+"%";$("savingsBar").style.width=s.settings.savings+"%";
+const max=Math.max(1,...s.categories.map(x=>x.total));$("categoryChart").classList.toggle("empty",!s.categories.length);$("categoryChart").innerHTML=s.categories.length?s.categories.map(x=>`<div class="barline"><span>${esc(x.category)}</span><div class="track"><i style="width:${x.total/max*100}%"></i></div><strong>${money(x.total)}</strong></div>`).join(""):"Добавь первую операцию — здесь появится аналитика";
+$("currency").value=currency;$("needs").value=s.settings.needs;$("wants").value=s.settings.wants;$("savings").value=s.settings.savings}
+async function refresh(){[transactions,goals]=await Promise.all([api("/api/transactions"),api("/api/goals")]);await renderSummary();renderTransactions();renderGoals()}
+function startTx(k="expense"){$("txForm").reset();kind=k;$("date").value=today();document.querySelectorAll("[data-kind]").forEach(b=>b.classList.toggle("selected",b.dataset.kind===kind));$("txTitle").textContent=kind==="income"?"Новый доход":"Новый расход";openModal("txModal")}
+$("addFab").onclick=()=>startTx();$("quickIncome").onclick=()=>startTx("income");$("quickExpense").onclick=()=>startTx("expense");
+document.querySelectorAll("[data-kind]").forEach(b=>b.onclick=()=>{kind=b.dataset.kind;document.querySelectorAll("[data-kind]").forEach(x=>x.classList.toggle("selected",x===b));$("txTitle").textContent=kind==="income"?"Новый доход":"Новый расход"});
+$("txForm").onsubmit=async e=>{e.preventDefault();try{await api("/api/transactions",{method:"POST",body:JSON.stringify({kind,amount:Number($("amount").value),category:$("category").value,note:$("note").value,happened_at:$("date").value})});closeModal("txModal");await refresh();showTab("history")}catch(err){notify(err.message)}};
+$("newGoal").onclick=()=>{$("goalForm").reset();openModal("goalModal")};
+$("goalForm").onsubmit=async e=>{e.preventDefault();try{await api("/api/goals",{method:"POST",body:JSON.stringify({title:$("goalTitle").value,target:Number($("goalTarget").value),saved:Number($("goalSaved").value||0),deadline:$("goalDeadline").value})});closeModal("goalModal");await refresh()}catch(err){notify(err.message)}};
+$("contributeForm").onsubmit=async e=>{e.preventDefault();try{await api(`/api/goals/${$("contributeId").value}/add`,{method:"POST",body:JSON.stringify({amount:Number($("contributeAmount").value)})});closeModal("contributeModal");await refresh()}catch(err){notify(err.message)}};
+$("settingsForm").onsubmit=async e=>{e.preventDefault();const data={currency:$("currency").value,needs:Number($("needs").value),wants:Number($("wants").value),savings:Number($("savings").value)};if(data.needs+data.wants+data.savings!==100){$("percentHint").textContent="Сумма процентов должна быть ровно 100%.";return}try{await api("/api/settings",{method:"PUT",body:JSON.stringify(data)});notify("Настройки бюджета сохранены");await refresh()}catch(err){notify(err.message)}};
+$("date").value=today();
+(async()=>{if(!initData){notify("Открой приложение через кнопку своего Telegram-бота, чтобы войти безопасно.");return}try{await refresh()}catch(e){notify(e.message)}})();
