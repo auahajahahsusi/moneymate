@@ -5,7 +5,7 @@ const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat("ru-RU",{style:"currency",currency,maximumFractionDigits:2}).format(Number(n||0));
 const today=()=>new Date().toISOString().slice(0,10);
 function notify(msg){$("notice").textContent=msg;$("notice").classList.remove("hidden");setTimeout(()=>$("notice").classList.add("hidden"),5000)}
-async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers,...opts.headers}});let data={};try{data=await r.json()}catch{}if(!r.ok)throw new Error(data.detail||"Ошибка запроса");return data}
+async function api(path,opts={}){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);let r;try{r=await fetch(path,{...opts,signal:controller.signal,cache:"no-store",headers:{...headers,...opts.headers}})}catch(err){if(err.name==="AbortError")throw new Error("Сервер не ответил за 30 секунд. Нажми «Повторить проверку»; если повторяется — проверь Render Logs.");throw new Error("Не удалось связаться с сервером: "+(err.message||"ошибка сети"))}finally{clearTimeout(timer)}let data={};try{data=await r.json()}catch{}if(!r.ok)throw new Error(data.detail||("Ошибка сервера HTTP "+r.status));return data}
 function openModal(id){$(id).classList.remove("hidden")}function closeModal(id){$(id).classList.add("hidden")}
 document.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>closeModal(b.dataset.close));
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab,.panel").forEach(x=>x.classList.remove("active"));b.classList.add("active");$(b.dataset.tab).classList.add("active")});
@@ -59,6 +59,7 @@ async function checkAccess(){
  const gate=$("accessGate"),title=$("gateTitle"),txt=$("gateText"),actions=$("gateActions");
  gate.classList.remove("hidden");
  if(!initData){title.textContent="Открой MoneyMate в Telegram";txt.textContent="Для безопасного входа запусти Mini App через своего Telegram-бота.";actions.innerHTML="";return}
+ title.textContent="Проверяем доступ…";txt.textContent="Связываемся с MoneyMate. Обычно это занимает несколько секунд.";actions.innerHTML="";
  try{
   const state=await api("/api/access");
   if(!state.channel_member){title.textContent="Сначала подпишись на канал";txt.textContent="Подпишись на MoneyMateDiary, затем нажми «Проверить подписку».";actions.innerHTML='<button class="primary" id="joinChannel">Подписаться на канал</button><button class="secondary" id="checkChannel">Проверить подписку</button>';

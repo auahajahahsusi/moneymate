@@ -29,3 +29,4 @@
 5. Premium is a recurring 30-day Telegram Stars subscription priced at 179 XTR. Payment activation is performed only from Telegram's verified `successful_payment` update.
 
 Important: use persistent storage or PostgreSQL for production. The included SQLite database on an ephemeral Render filesystem can be lost during redeploy/restart; that would also lose local subscription records. Telegram's payment history remains on Telegram, but the app's entitlement state needs durable storage. Test payments in a Telegram test environment before announcing sales.
+\n\n## Исправление 5.1\nВ клиенте добавлен тайм-аут сетевых запросов (30 секунд) и понятное сообщение при недоступности API, чтобы экран проверки доступа не оставался на бесконечной загрузке без объяснения. Если запрос прерывается по тайм-ауту, проверьте Render Logs и доступность Telegram Bot API.\n
