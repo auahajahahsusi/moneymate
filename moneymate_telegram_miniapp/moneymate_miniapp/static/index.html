@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f7f4">
+  <title>MoneyMate</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <header><div><div class="eyebrow">ТВОИ ФИНАНСЫ</div><h1>MoneyMate <span>✳</span></h1></div><div class="avatar">₊</div></header>
+  <section class="balance card">
+    <div class="eyebrow light">ОБЩИЙ БАЛАНС</div>
+    <div class="total" id="balance">0,00 €</div>
+    <div class="balance-row"><div><small>Доходы</small><b id="income">+0 €</b></div><div><small>Расходы</small><b id="expenses">−0 €</b></div></div>
+  </section>
+  <nav class="tabs">
+    <button class="tab active" data-tab="home">Обзор</button>
+    <button class="tab" data-tab="journal">Дневник</button>
+    <button class="tab" data-tab="calculator">Калькулятор</button>
+  </nav>
+  <main>
+    <section id="home" class="panel">
+      <div class="section-head"><h2>Мой бюджет</h2><button class="text-btn" id="editBudget">Настроить</button></div>
+      <div class="card budget">
+        <div class="budget-line"><div><i class="dot green"></i><span>Необходимое</span></div><b id="necessaryVal">50%</b></div><div class="bar"><i id="necessaryBar" class="green-bg" style="width:50%"></i></div>
+        <div class="budget-line"><div><i class="dot yellow"></i><span>Среднее</span></div><b id="flexibleVal">30%</b></div><div class="bar"><i id="flexibleBar" class="yellow-bg" style="width:30%"></i></div>
+        <div class="budget-line"><div><i class="dot red"></i><span>Необязательное</span></div><b id="nonessentialVal">20%</b></div><div class="bar"><i id="nonessentialBar" class="red-bg" style="width:20%"></i></div>
+        <p class="hint">Плановое распределение дохода. Меняй доли под свои цели.</p>
+      </div>
+      <div class="section-head"><h2>Последние операции</h2></div>
+      <div id="entries" class="card list"><div class="empty">Пока нет операций. Добавь первую запись ниже.</div></div>
+      <button class="primary wide" id="addExpense">＋ Добавить расход</button>
+      <button class="secondary wide" id="addIncome">＋ Добавить доход</button>
+    </section>
+    <section id="journal" class="panel hidden">
+      <h2>Мой дневник</h2><p class="muted">Записывай мысли, цели и финансовые наблюдения.</p>
+      <textarea id="journalText" placeholder="Например: сегодня удалось не покупать лишнего..."></textarea>
+      <button class="primary wide" id="saveJournal">Сохранить запись</button>
+      <div id="journalEntries" class="card list"></div>
+    </section>
+    <section id="calculator" class="panel hidden">
+      <h2>Калькулятор</h2><div class="card calc">
+        <input id="calcDisplay" value="0" readonly aria-label="Результат">
+        <div class="keys">
+          <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button><button class="op" data-key="/">÷</button>
+          <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button><button class="op" data-key="*">×</button>
+          <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button><button class="op" data-key="-">−</button>
+          <button data-key="0">0</button><button data-key=".">.</button><button class="op" data-key="C">C</button><button class="op" data-key="+">+</button>
+          <button class="equals" data-key="=">=</button>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer>Твои деньги — под твоим контролем 🌿</footer>
+</div>
+<div class="modal hidden" id="modal"><div class="sheet">
+  <div class="sheet-top"><h2 id="modalTitle">Новая операция</h2><button id="closeModal" class="close">×</button></div>
+  <label>Сумма <input id="amount" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
+  <label>Категория <select id="category"><option value="necessary">Необходимое</option><option value="flexible">Среднее</option><option value="nonessential">Необязательное</option></select></label>
+  <label>Комментарий <input id="note" maxlength="300" placeholder="Например, продукты"></label>
+  <button id="saveEntry" class="primary wide">Сохранить</button>
+</div></div>
+<div class="modal hidden" id="budgetModal"><div class="sheet">
+  <div class="sheet-top"><h2>Распределение</h2><button id="closeBudget" class="close">×</button></div>
+  <p class="muted">Укажи проценты. В сумме должно получиться 100%.</p>
+  <label>Необходимое, % <input id="pNecessary" type="number" min="0" max="100" value="50"></label>
+  <label>Среднее, % <input id="pFlexible" type="number" min="0" max="100" value="30"></label>
+  <label>Необязательное, % <input id="pNonessential" type="number" min="0" max="100" value="20"></label>
+  <label>Валюта <select id="currency"><option>EUR</option><option>USD</option><option>RUB</option><option>GBP</option></select></label>
+  <button id="saveBudget" class="primary wide">Сохранить бюджет</button>
+</div></div>
+<script src="/static/app.js"></script>
+</body></html>
