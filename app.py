@@ -40,6 +40,14 @@ def init_db():
           needs REAL NOT NULL DEFAULT 50, wants REAL NOT NULL DEFAULT 30,
           savings REAL NOT NULL DEFAULT 20
         );
+        CREATE TABLE IF NOT EXISTS recurring_payments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('income','expense')),
+          amount REAL NOT NULL, category TEXT NOT NULL, note TEXT DEFAULT '',
+          frequency TEXT NOT NULL CHECK(frequency IN ('weekly','monthly','yearly')),
+          next_date TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL
+        );
         """)
 init_db()
 
@@ -80,6 +88,14 @@ class GoalIn(BaseModel):
 
 class GoalAdd(BaseModel):
     amount: float = Field(gt=0)
+
+class RecurringIn(BaseModel):
+    kind: str
+    amount: float = Field(gt=0, le=100000000)
+    category: str = Field(min_length=1, max_length=40)
+    note: str = Field(default="", max_length=160)
+    frequency: str
+    next_date: str
 
 class SettingsIn(BaseModel):
     currency: str = "RUB"
@@ -165,6 +181,83 @@ def delete_goal(goal_id: int, x_telegram_init_data: str = Header(default="")):
         raise HTTPException(404, "Goal not found")
     return {"ok": True}
 
+def advance_date(date_text: str, frequency: str) -> str:
+    from datetime import date, timedelta
+    from calendar import monthrange
+    d = date.fromisoformat(date_text)
+    if frequency == "weekly":
+        d += timedelta(days=7)
+    elif frequency == "yearly":
+        try:
+            d = d.replace(year=d.year + 1)
+        except ValueError:
+            d = d.replace(year=d.year + 1, day=28)
+    else:
+        month = d.month + 1
+        year = d.year + (month - 1) // 12
+        month = (month - 1) % 12 + 1
+        d = d.replace(year=year, month=month, day=min(d.day, monthrange(year, month)[1]))
+    return d.isoformat()
+
+def process_due_payments(uid: str):
+    today = datetime.now().date().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as c:
+        rows = c.execute("SELECT * FROM recurring_payments WHERE user_id=? AND active=1 AND next_date<=?", (uid, today)).fetchall()
+        for item in rows:
+            next_date = item["next_date"]
+            # Catch up every missed occurrence exactly once when the user opens the app.
+            for _ in range(120):
+                if next_date > today:
+                    break
+                c.execute("INSERT INTO transactions(user_id,kind,amount,category,note,happened_at,created_at) VALUES(?,?,?,?,?,?,?)",
+                    (uid, item["kind"], item["amount"], item["category"], item["note"], next_date, now))
+                next_date = advance_date(next_date, item["frequency"])
+            c.execute("UPDATE recurring_payments SET next_date=? WHERE id=? AND user_id=?", (next_date, item["id"], uid))
+
+@app.get("/api/recurring")
+def list_recurring(x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    process_due_payments(uid)
+    with db() as c:
+        rows = c.execute("SELECT * FROM recurring_payments WHERE user_id=? ORDER BY active DESC,next_date ASC,id DESC", (uid,)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/recurring")
+def add_recurring(data: RecurringIn, x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    if data.kind not in ("income", "expense") or data.frequency not in ("weekly", "monthly", "yearly"):
+        raise HTTPException(400, "Invalid recurring payment settings")
+    try:
+        datetime.strptime(data.next_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "Invalid next date")
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as c:
+        cur = c.execute("INSERT INTO recurring_payments(user_id,kind,amount,category,note,frequency,next_date,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (uid, data.kind, data.amount, data.category.strip(), data.note.strip(), data.frequency, data.next_date, now))
+        row = c.execute("SELECT * FROM recurring_payments WHERE id=?", (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+@app.patch("/api/recurring/{payment_id}")
+def toggle_recurring(payment_id: int, x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    with db() as c:
+        c.execute("UPDATE recurring_payments SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=? AND user_id=?", (payment_id, uid))
+        row = c.execute("SELECT * FROM recurring_payments WHERE id=? AND user_id=?", (payment_id, uid)).fetchone()
+    if not row:
+        raise HTTPException(404, "Recurring payment not found")
+    return dict(row)
+
+@app.delete("/api/recurring/{payment_id}")
+def delete_recurring(payment_id: int, x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    with db() as c:
+        cur = c.execute("DELETE FROM recurring_payments WHERE id=? AND user_id=?", (payment_id, uid))
+    if not cur.rowcount:
+        raise HTTPException(404, "Recurring payment not found")
+    return {"ok": True}
+
 @app.get("/api/settings")
 def get_settings(x_telegram_init_data: str = Header(default="")):
     uid = current_user(x_telegram_init_data)
@@ -182,7 +275,7 @@ def save_settings(data: SettingsIn, x_telegram_init_data: str = Header(default="
         raise HTTPException(400, "Budget percentages must total 100")
     with db() as c:
         c.execute("INSERT INTO settings(user_id,currency,needs,wants,savings) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET currency=excluded.currency,needs=excluded.needs,wants=excluded.wants,savings=excluded.savings",
-          (uid, data.currency, data.needs, data.wants, data.savings))
+          (uid, "RUB", data.needs, data.wants, data.savings))
     return {"ok": True}
 
 @app.get("/api/summary")
@@ -197,9 +290,29 @@ def summary(x_telegram_init_data: str = Header(default="")):
             c.execute("INSERT INTO settings(user_id) VALUES(?)", (uid,))
             settings = c.execute("SELECT * FROM settings WHERE user_id=?", (uid,)).fetchone()
     totals = {r["kind"]: r["total"] or 0 for r in rows}
-    return {"income": totals.get("income",0), "expense": totals.get("expense",0),
-      "balance": totals.get("income",0)-totals.get("expense",0),
-      "categories": [dict(r) for r in cats], "settings": dict(settings), "month": month}
+    income, expense = totals.get("income", 0), totals.get("expense", 0)
+    balance = income - expense
+    # Transparent 1-100 wellness indicator, not a credit score or financial advice.
+    if income <= 0:
+        score = 1
+        score_parts = {"сбережения": 0, "баланс": 0, "расходы": 0, "резерв": 0}
+        score_hint = "Добавь доходы и расходы, чтобы оценка стала точнее."
+    else:
+        savings_rate = max(0, balance / income)
+        savings_points = min(30, savings_rate / 0.20 * 30)
+        balance_points = 25 if balance >= 0 else max(0, 25 * (1 + balance / income))
+        ratio = expense / income
+        spending_points = 25 if ratio <= 0.5 else (25 * max(0, (1-ratio)/0.5) if ratio < 1 else 0)
+        with db() as c:
+            reserve = c.execute("SELECT COALESCE(SUM(saved),0) FROM goals WHERE user_id=? AND (lower(title) LIKE '%резерв%' OR lower(title) LIKE '%подушк%')", (uid,)).fetchone()[0]
+        reserve_points = min(20, reserve / max(expense * 3, 1) * 20) if expense > 0 else (20 if reserve > 0 else 0)
+        raw_score = savings_points + balance_points + spending_points + reserve_points
+        score = max(1, min(100, round(raw_score)))
+        score_parts = {"сбережения": round(savings_points), "баланс": round(balance_points), "расходы": round(spending_points), "резерв": round(reserve_points)}
+        score_hint = "Создай цель «Финансовая подушка» и пополняй её, чтобы улучшить оценку." if reserve_points < 20 else "Продолжай поддерживать положительный баланс."
+    return {"income": income, "expense": expense, "balance": balance,
+      "categories": [dict(r) for r in cats], "settings": dict(settings), "month": month,
+      "financial_health": {"score": score, "parts": score_parts, "hint": score_hint}}
 
 @app.get("/")
 def index():

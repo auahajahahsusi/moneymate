@@ -34,3 +34,27 @@ body{background:
 @keyframes fabPulse{0%,100%{box-shadow:0 8px 30px #0008}50%{box-shadow:0 8px 32px rgba(85,214,154,.22)}}
 @media(max-width:390px){.pill-nav .tab{gap:3px;font-size:10px;padding:9px 3px}.nav-ico{font-size:17px}.app{padding-left:12px;padding-right:12px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+
+/* Financial health and recurring payments */
+.health-card{background:linear-gradient(135deg,#172b22,#151d1b 65%,#211c30);border-color:#315443}
+.health-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.health-score{display:flex;align-items:baseline;gap:5px;margin-top:5px}
+.health-score b{font-size:38px;letter-spacing:-2px;color:var(--green)}
+.health-score span{color:var(--muted);font-size:13px}
+.health-score em{font-style:normal;font-size:11px;color:var(--green);margin-left:6px}
+.health-ring{--score:1;width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--green) calc(var(--score)*1%),#2a3932 0);position:relative;color:var(--green);font-size:22px}
+.health-ring:before{content:"";position:absolute;inset:5px;border-radius:50%;background:#17251f}
+.health-ring span{position:relative}
+.health-card .track{margin:12px 0 8px}
+.health-hint{font-size:11px;line-height:1.45}
+.health-parts{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+.health-parts span{background:#0e1914;border:1px solid #2a4034;border-radius:9px;padding:6px 8px;color:var(--muted);font-size:10px}
+.health-parts b{color:var(--green);margin-left:3px}
+.recurring-note{font-size:11px;line-height:1.5;margin:-3px 2px 13px}
+.recurring-item{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px}
+.recurring-item .tx-main b{font-size:12px}
+.recurring-item .tx-main small{display:block;font-size:10px;line-height:1.5}
+.recurring-actions{display:flex;flex-direction:column;align-items:center;gap:3px}
+.status-on{color:var(--green)!important}.status-off{color:var(--red)!important}
+.pill-nav .tab{min-width:0}
+@media(max-width:430px){.pill-nav .tab{flex-direction:column;gap:3px;padding:7px 2px;font-size:9px}.nav-ico{font-size:16px}.recurring-item{gap:7px;padding:10px}.recurring-actions .small-btn{padding:7px 6px;font-size:9px}}
