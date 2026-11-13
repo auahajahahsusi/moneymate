@@ -429,8 +429,33 @@ def financial_assistant(data: AIQuestion, x_telegram_init_data: str = Header(def
         answer = ("Расходы за этот месяц: " + "; ".join(f"{k} — {money(v)}" for k,v in top[:5]) + f". Самая затратная категория — {top[0][0]}.") if top else "Пока нет записанных расходов за этот месяц. Добавь операции, и я покажу разбивку."
     elif any(w in question for w in ("кошел", "карта", "налич", "остат")):
         answer = f"В кошельках указано {money(sum(w['balance'] for w in wallets))}. " + ("; ".join(f"{w['name']}: {money(w['balance'])}" for w in wallets) if wallets else "Кошельки пока не добавлены.")
+    elif any(w in question for w in ("накоп", "собрать", "отлож")) and any(ch.isdigit() for ch in question):
+        import re, math
+        nums=re.findall(r"\d[\d\s]*(?:[.,]\d+)?", question)
+        target=float(nums[0].replace(" ","").replace(",",".")) if nums else 0
+        target=max(0,target)
+        month_match=re.search(r"за\s+(\d+)\s*(?:мес|месяц|месяца|месяцев)", question)
+        year_match=re.search(r"за\s+(\d+)\s*(?:год|года|лет)", question)
+        months=int(month_match.group(1)) if month_match else (int(year_match.group(1))*12 if year_match else 0)
+        if target:
+            current_saved=sum(float(g["saved"]) for g in goals)
+            remaining=max(0,target-current_saved)
+            surplus=max(0,balance)
+            if months:
+                monthly=remaining/months
+                weekly=monthly*12/52
+                feasible=monthly<=surplus if income>0 else False
+                answer=f"Чтобы накопить {money(target)}, осталось собрать {money(remaining)}. За {months} мес. откладывай примерно {money(monthly)} в месяц (около {money(weekly)} в неделю). "
+                answer += (f"По текущему месяцу после расходов осталось {money(surplus)} — такой план выглядит достижимым, если доходы и расходы будут похожими." if feasible else f"Сейчас разница доходов и расходов за месяц — {money(balance)}. Нужно сократить расходы или увеличить срок/доход: запланированная сумма пока выше текущего свободного остатка.")
+            else:
+                monthly=max(1,surplus)
+                estimate=math.ceil(remaining/monthly) if surplus>0 else 0
+                answer=f"Цель — {money(target)}. Уже накоплено в целях: {money(current_saved)}, осталось {money(remaining)}. "
+                answer += (f"При текущем свободном остатке около {money(surplus)} в месяц можно ориентироваться примерно на {estimate} мес. Откладывай эту сумму каждый месяц." if estimate else "Пока по данным этого месяца свободного остатка нет. Начни с небольшого регулярного взноса и попробуй снизить одну-две категории расходов.")
+        else:
+            answer="Напиши сумму, которую хочешь накопить, например: «Как накопить 50 000 рублей за 6 месяцев?»"
     elif any(w in question for w in ("цель", "накоп", "собрать", "отлож")):
-        answer = ("Твои цели: " + "; ".join(f"{g['title']} — {money(g['saved'])} из {money(g['target'])} ({min(100,round(g['saved']/g['target']*100))}%)" for g in goals) + ". Пополняй их регулярно, не забывая о резерве.") if goals else "Пока целей нет. Создай цель в разделе «Цели», чтобы отслеживать накопления."
+        answer = ("Твои цели: " + "; ".join(f"{g['title']} — {money(g['saved'])} из {money(g['target'])} ({min(100,round(g['saved']/g['target']*100))}%)" for g in goals) + ". Пополняй их регулярно, не забывая о резерве.") if goals else "Пока целей нет. Могу рассчитать план накопления — напиши сумму и желаемый срок, например: «Как накопить 50 000 рублей за 6 месяцев?»"
     elif any(w in question for w in ("платеж", "подпис", "обязатель", "когда")):
         answer = ("Ближайшие регулярные платежи: " + "; ".join(f"{r['category']} — {money(r['amount'])}, дата {r['next_date']}" for r in recurring[:6])) if recurring else "Активных регулярных платежей пока нет. Добавь их в разделе «Платежи»."
     elif any(w in question for w in ("могу потратить", "до конца месяца", "сколько потратить", "бюджет")):
