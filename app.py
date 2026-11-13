@@ -8,6 +8,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@MoneyMateDiary")
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+PREMIUM_STARS = 179
 DB_PATH = os.getenv("DB_PATH", "moneymate.db")
 app = FastAPI(title="MoneyMate API")
 
@@ -24,6 +28,11 @@ def db():
 def init_db():
     with db() as c:
         c.executescript("""
+        CREATE TABLE IF NOT EXISTS subscriptions (
+          user_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'free',
+          expires_at INTEGER DEFAULT 0, telegram_charge_id TEXT DEFAULT '',
+          updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS transactions (
           id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
           kind TEXT NOT NULL CHECK(kind IN ('income','expense')),
@@ -80,8 +89,36 @@ def verify_init_data(init_data: str):
     except Exception:
         raise HTTPException(401, "Open MoneyMate from your Telegram bot")
 
+def telegram_api(method: str, payload: dict):
+    if not BOT_TOKEN:
+        raise HTTPException(503, "BOT_TOKEN is not configured on the server")
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            result = json.loads(response.read().decode())
+        if not result.get("ok"):
+            raise RuntimeError(result.get("description", "Telegram API error"))
+        return result.get("result")
+    except Exception as exc:
+        raise HTTPException(502, f"Telegram API error: {exc}")
+
+def is_channel_member(uid: str) -> bool:
+    try:
+        member = telegram_api("getChatMember", {"chat_id": REQUIRED_CHANNEL, "user_id": int(uid)})
+        return member.get("status") in ("creator", "administrator", "member") or (member.get("status") == "restricted" and member.get("is_member"))
+    except Exception:
+        return False
+
 def current_user(x_telegram_init_data: str = Header(default="")):
-    return verify_init_data(x_telegram_init_data)
+    uid = verify_init_data(x_telegram_init_data)
+    if not is_channel_member(uid):
+        raise HTTPException(403, "Подпишись на Telegram-канал MoneyMate, чтобы пользоваться приложением")
+    return uid
 
 class TransactionIn(BaseModel):
     kind: str
@@ -112,6 +149,73 @@ class SettingsIn(BaseModel):
     needs: float = Field(ge=0, le=100)
     wants: float = Field(ge=0, le=100)
     savings: float = Field(ge=0, le=100)
+
+@app.on_event("startup")
+async def register_telegram_webhook():
+    if BOT_TOKEN and PUBLIC_BASE_URL and TELEGRAM_WEBHOOK_SECRET:
+        try:
+            telegram_api("setWebhook", {
+                "url": PUBLIC_BASE_URL + "/api/telegram/webhook",
+                "secret_token": TELEGRAM_WEBHOOK_SECRET,
+                "allowed_updates": ["message", "pre_checkout_query"],
+            })
+        except Exception as exc:
+            print(f"Telegram webhook registration failed: {exc}")
+
+@app.get("/api/access")
+def access(x_telegram_init_data: str = Header(default="")):
+    uid = verify_init_data(x_telegram_init_data)
+    member = is_channel_member(uid)
+    with db() as c:
+        row = c.execute("SELECT * FROM subscriptions WHERE user_id=?", (uid,)).fetchone()
+        if row and row["status"] == "premium" and row["expires_at"] and row["expires_at"] <= int(time.time()):
+            c.execute("UPDATE subscriptions SET status='free' WHERE user_id=?", (uid,))
+            row = c.execute("SELECT * FROM subscriptions WHERE user_id=?", (uid,)).fetchone()
+    premium = bool(row and row["status"] == "premium" and row["expires_at"] > int(time.time()))
+    return {"channel_member": member, "channel": REQUIRED_CHANNEL, "plan": "premium" if premium else "free", "premium_expires_at": row["expires_at"] if premium else None, "stars_price": PREMIUM_STARS}
+
+@app.post("/api/premium/invoice")
+def premium_invoice(x_telegram_init_data: str = Header(default="")):
+    uid = verify_init_data(x_telegram_init_data)
+    if not is_channel_member(uid):
+        raise HTTPException(403, "Сначала подпишись на канал MoneyMate")
+    payload = f"moneymate_premium:{uid}:{int(time.time())}"
+    link = telegram_api("createInvoiceLink", {
+        "title": "MoneyMate Premium",
+        "description": "Доступ к расширенным возможностям MoneyMate на 30 дней",
+        "payload": payload,
+        "provider_token": "",
+        "currency": "XTR",
+        "prices": [{"label": "MoneyMate Premium · 30 дней", "amount": PREMIUM_STARS}],
+        "subscription_period": 2592000,
+    })
+    return {"invoice_url": link, "stars": PREMIUM_STARS}
+
+@app.post("/api/telegram/webhook")
+def telegram_webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(default="")):
+    if not TELEGRAM_WEBHOOK_SECRET:
+        raise HTTPException(503, "TELEGRAM_WEBHOOK_SECRET is not configured")
+    if not hmac.compare_digest(x_telegram_bot_api_secret_token, TELEGRAM_WEBHOOK_SECRET):
+        raise HTTPException(403, "Invalid webhook secret")
+    if "pre_checkout_query" in update:
+        query = update["pre_checkout_query"]
+        telegram_api("answerPreCheckoutQuery", {"pre_checkout_query_id": query["id"], "ok": True})
+        return {"ok": True}
+    message = update.get("message") or update.get("edited_message") or {}
+    payment = message.get("successful_payment")
+    if payment:
+        payload = payment.get("invoice_payload", "")
+        parts = payload.split(":")
+        if len(parts) != 3 or parts[0] != "moneymate_premium":
+            return {"ok": True}
+        uid = parts[1]
+        if str(message.get("from", {}).get("id", "")) != uid or payment.get("currency") != "XTR" or int(payment.get("total_amount", 0)) != PREMIUM_STARS:
+            raise HTTPException(400, "Payment payload mismatch")
+        expiry = int(payment.get("subscription_expiration_date") or (int(time.time()) + 2592000))
+        now = datetime.now(timezone.utc).isoformat()
+        with db() as c:
+            c.execute("INSERT INTO subscriptions(user_id,status,expires_at,telegram_charge_id,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET status='premium',expires_at=excluded.expires_at,telegram_charge_id=excluded.telegram_charge_id,updated_at=excluded.updated_at", (uid, "premium", expiry, payment.get("telegram_payment_charge_id", ""), now))
+    return {"ok": True}
 
 @app.get("/api/health")
 def health():
