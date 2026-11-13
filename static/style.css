@@ -61,3 +61,26 @@ body{background:
 /* MoneyMate 4.0 additions */
 #calendarMonth{width:100%;margin-top:8px;background:#111c19;color:#f2f7f4;border:1px solid #263a32;border-radius:14px;padding:12px}
 #exportData{margin-top:16px;width:100%}
+
+
+/* v4.1: clearer navigation, contained calendar, AI assistant */
+.pill-nav{position:relative;top:auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px;border-radius:24px;margin:18px 0 24px;overflow:visible}
+.pill-nav .tab{min-width:0;min-height:66px;display:flex;flex-direction:column;gap:5px;padding:9px 5px;border:1px solid transparent;border-radius:17px;font-size:11px;line-height:1.2;white-space:normal;overflow-wrap:anywhere}
+.pill-nav .tab.active{border-color:#47745c}
+.pill-nav .nav-ico{font-size:21px}
+.panel{min-width:0;width:100%}
+#calendarEvents{min-width:0;width:100%;overflow:hidden;gap:10px}
+#calendarEvents .tx{min-width:0;width:100%;gap:9px;padding:11px}
+#calendarEvents .tx-main{min-width:0;overflow-wrap:anywhere}
+#calendarEvents .tx-amount{flex:0 1 auto;min-width:0;max-width:42%;text-align:right;overflow-wrap:anywhere;font-size:12px}
+#calendarEvents .tx-icon{flex:0 0 36px;width:36px;height:36px}
+#calendar .form{min-width:0;overflow:hidden}
+#calendarMonth{display:block;max-width:100%;min-width:0;min-height:46px;box-sizing:border-box}
+.ai-intro{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+.ai-intro p{font-size:12px;line-height:1.5;margin:5px 0 0}
+.ai-orb{flex:0 0 48px;width:48px;height:48px;border-radius:17px;display:grid;place-items:center;background:linear-gradient(135deg,#285b43,#59427c);font-size:25px;color:#dffff0}
+.ai-answer{min-height:100px;white-space:pre-wrap;line-height:1.6;font-size:13px;margin-bottom:12px;overflow-wrap:anywhere}
+.ai-form{display:grid;gap:10px}
+.ai-form textarea{width:100%;resize:vertical;min-height:88px;padding:13px;border:1px solid var(--line);border-radius:13px;background:#0d1512;color:var(--text);font:inherit;box-sizing:border-box}
+.ai-note{font-size:10px;line-height:1.5}
+@media(max-width:390px){.pill-nav{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:8px}.pill-nav .tab{min-height:62px;font-size:10px;padding:8px 3px}#calendarEvents .tx{gap:7px;padding:9px}#calendarEvents .tx-amount{font-size:11px;max-width:44%}}

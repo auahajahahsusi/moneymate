@@ -37,3 +37,10 @@ Telegram Mini App для личных финансов. Интерфейс на 
 - Экспорт JSON — это скачиваемая копия, автоматического облачного восстановления пока нет.
 - Сканирование чеков с OCR и полноценный AI-чат не включены: для них нужны отдельный OCR/AI-сервис и безопасная настройка ключей. Не вводи секретные ключи в клиентский код.
 - PIN-защита не реализована; безопасность Telegram-входа по initData остаётся обязательной.
+
+## MoneyMate 4.1 UI fixes and AI assistant
+- Navigation now uses a spacious 3-column grid, avoiding overlapping tab buttons on small screens.
+- Calendar event rows and month selector are constrained to the viewport width.
+- Added a MoneyMate AI assistant screen and `/api/assistant` endpoint.
+- To enable AI, add `OPENAI_API_KEY` in Render → Environment. Optionally set `OPENAI_MODEL` (default: `gpt-4o-mini`). Never put the API key in frontend files or commit it to GitHub.
+- The assistant sends recent transactions, goals, wallet balances and budget settings for the signed-in Telegram user to the OpenAI API to answer budget questions. Do not enter bank passwords, card numbers or other secrets.

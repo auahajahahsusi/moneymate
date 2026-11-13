@@ -1,4 +1,4 @@
-import os, json, sqlite3, hashlib, hmac, time
+import os, json, sqlite3, hashlib, hmac, time, urllib.request, urllib.error
 from urllib.parse import parse_qsl
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -402,3 +402,35 @@ def index():
     return FileResponse("static/index.html")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+class AIQuestion(BaseModel):
+    question: str = Field(min_length=2, max_length=1200)
+
+@app.post("/api/assistant")
+def financial_assistant(data: AIQuestion, x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(503, "ИИ пока не подключён. Добавь OPENAI_API_KEY в Render → Environment.")
+    with db() as c:
+        tx = [dict(r) for r in c.execute("SELECT kind, amount, category, happened_at FROM transactions WHERE user_id=? ORDER BY happened_at DESC LIMIT 100", (uid,)).fetchall()]
+        goals = [dict(r) for r in c.execute("SELECT title, target, saved, deadline FROM goals WHERE user_id=?", (uid,)).fetchall()]
+        settings = c.execute("SELECT needs,wants,savings FROM settings WHERE user_id=?", (uid,)).fetchone()
+        wallets = [dict(r) for r in c.execute("SELECT name,kind,balance FROM wallets WHERE user_id=?", (uid,)).fetchall()]
+    context = {"transactions": tx, "goals": goals, "budget": dict(settings) if settings else {}, "wallets": wallets, "currency": "RUB"}
+    payload = {"model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"), "messages": [
+        {"role": "system", "content": "Ты MoneyMate AI — дружелюбный помощник по личному бюджету. Отвечай по-русски, кратко и понятно. Все суммы только в российских рублях (₽). Анализируй только предоставленные данные, не выдумывай отсутствующие цифры. Если данных мало — прямо скажи. Не проси пароли, коды или банковские реквизиты. Не выдавай себя за лицензированного финансового консультанта."},
+        {"role": "user", "content": "Данные моего MoneyMate (JSON): " + json.dumps(context, ensure_ascii=False) + "\n\nМой вопрос: " + data.question}
+    ], "temperature": 0.4}
+    req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=json.dumps(payload).encode(), headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=25) as response:
+            result = json.loads(response.read().decode())
+        answer = result["choices"][0]["message"]["content"].strip()
+        return {"answer": answer}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="ignore")[:500]
+        raise HTTPException(502, "Ошибка подключения к ИИ-провайдеру: " + detail)
+    except Exception:
+        raise HTTPException(502, "Не удалось получить ответ ИИ. Попробуй ещё раз.")
