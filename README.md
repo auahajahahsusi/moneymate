@@ -44,3 +44,4 @@ Telegram Mini App для личных финансов. Интерфейс на 
 - Added a MoneyMate AI assistant screen and `/api/assistant` endpoint.
 - To enable AI, add `OPENAI_API_KEY` in Render → Environment. Optionally set `OPENAI_MODEL` (default: `gpt-4o-mini`). Never put the API key in frontend files or commit it to GitHub.
 - The assistant sends recent transactions, goals, wallet balances and budget settings for the signed-in Telegram user to the OpenAI API to answer budget questions. Do not enter bank passwords, card numbers or other secrets.
+\n\n## Встроенный финансовый помощник (без API)\nРаздел «ИИ-помощник» работает локально на сервере по правилам и данным пользователя. API-ключ и платный API не нужны. Это не генеративная языковая модель: помощник отвечает на поддерживаемые типы вопросов о расходах, бюджете, кошельках, целях и регулярных платежах.\n

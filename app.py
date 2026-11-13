@@ -410,27 +410,35 @@ class AIQuestion(BaseModel):
 @app.post("/api/assistant")
 def financial_assistant(data: AIQuestion, x_telegram_init_data: str = Header(default="")):
     uid = current_user(x_telegram_init_data)
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        raise HTTPException(503, "ИИ пока не подключён. Добавь OPENAI_API_KEY в Render → Environment.")
+    question = data.question.lower()
+    month = datetime.now().strftime("%Y-%m")
     with db() as c:
-        tx = [dict(r) for r in c.execute("SELECT kind, amount, category, happened_at FROM transactions WHERE user_id=? ORDER BY happened_at DESC LIMIT 100", (uid,)).fetchall()]
-        goals = [dict(r) for r in c.execute("SELECT title, target, saved, deadline FROM goals WHERE user_id=?", (uid,)).fetchall()]
-        settings = c.execute("SELECT needs,wants,savings FROM settings WHERE user_id=?", (uid,)).fetchone()
+        tx = [dict(r) for r in c.execute("SELECT kind, amount, category, happened_at FROM transactions WHERE user_id=? AND substr(happened_at,1,7)=?", (uid, month)).fetchall()]
+        goals = [dict(r) for r in c.execute("SELECT title,target,saved,deadline FROM goals WHERE user_id=?", (uid,)).fetchall()]
         wallets = [dict(r) for r in c.execute("SELECT name,kind,balance FROM wallets WHERE user_id=?", (uid,)).fetchall()]
-    context = {"transactions": tx, "goals": goals, "budget": dict(settings) if settings else {}, "wallets": wallets, "currency": "RUB"}
-    payload = {"model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"), "messages": [
-        {"role": "system", "content": "Ты MoneyMate AI — дружелюбный помощник по личному бюджету. Отвечай по-русски, кратко и понятно. Все суммы только в российских рублях (₽). Анализируй только предоставленные данные, не выдумывай отсутствующие цифры. Если данных мало — прямо скажи. Не проси пароли, коды или банковские реквизиты. Не выдавай себя за лицензированного финансового консультанта."},
-        {"role": "user", "content": "Данные моего MoneyMate (JSON): " + json.dumps(context, ensure_ascii=False) + "\n\nМой вопрос: " + data.question}
-    ], "temperature": 0.4}
-    req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=json.dumps(payload).encode(), headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=25) as response:
-            result = json.loads(response.read().decode())
-        answer = result["choices"][0]["message"]["content"].strip()
-        return {"answer": answer}
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode(errors="ignore")[:500]
-        raise HTTPException(502, "Ошибка подключения к ИИ-провайдеру: " + detail)
-    except Exception:
-        raise HTTPException(502, "Не удалось получить ответ ИИ. Попробуй ещё раз.")
+        recurring = [dict(r) for r in c.execute("SELECT kind,amount,category,next_date,frequency FROM recurring_payments WHERE user_id=? AND active=1 ORDER BY next_date", (uid,)).fetchall()]
+    income = sum(x["amount"] for x in tx if x["kind"] == "income")
+    expense = sum(x["amount"] for x in tx if x["kind"] == "expense")
+    balance = income - expense
+    cats = {}
+    for x in tx:
+        if x["kind"] == "expense": cats[x["category"]] = cats.get(x["category"], 0) + x["amount"]
+    top = sorted(cats.items(), key=lambda x: x[1], reverse=True)
+    money = lambda n: f"{n:,.0f}".replace(",", " ") + " ₽"
+    if any(w in question for w in ("категор", "трачу", "расход", "куда уход")):
+        answer = ("Расходы за этот месяц: " + "; ".join(f"{k} — {money(v)}" for k,v in top[:5]) + f". Самая затратная категория — {top[0][0]}.") if top else "Пока нет записанных расходов за этот месяц. Добавь операции, и я покажу разбивку."
+    elif any(w in question for w in ("кошел", "карта", "налич", "остат")):
+        answer = f"В кошельках указано {money(sum(w['balance'] for w in wallets))}. " + ("; ".join(f"{w['name']}: {money(w['balance'])}" for w in wallets) if wallets else "Кошельки пока не добавлены.")
+    elif any(w in question for w in ("цель", "накоп", "собрать", "отлож")):
+        answer = ("Твои цели: " + "; ".join(f"{g['title']} — {money(g['saved'])} из {money(g['target'])} ({min(100,round(g['saved']/g['target']*100))}%)" for g in goals) + ". Пополняй их регулярно, не забывая о резерве.") if goals else "Пока целей нет. Создай цель в разделе «Цели», чтобы отслеживать накопления."
+    elif any(w in question for w in ("платеж", "подпис", "обязатель", "когда")):
+        answer = ("Ближайшие регулярные платежи: " + "; ".join(f"{r['category']} — {money(r['amount'])}, дата {r['next_date']}" for r in recurring[:6])) if recurring else "Активных регулярных платежей пока нет. Добавь их в разделе «Платежи»."
+    elif any(w in question for w in ("могу потратить", "до конца месяца", "сколько потратить", "бюджет")):
+        import calendar
+        days = calendar.monthrange(datetime.now().year, datetime.now().month)[1] - datetime.now().day + 1
+        daily = max(0, balance) / max(days, 1)
+        answer = f"За месяц доходы — {money(income)}, расходы — {money(expense)}, разница — {money(balance)}. До конца месяца {days} дн. Ориентир по текущему остатку — до {money(daily)} в день, если новых доходов и обязательных расходов не будет."
+    else:
+        score = 1 if income <= 0 else max(1, min(100, round(min(30,max(0,balance/income)/.2*30) + (25 if balance>=0 else max(0,25*(1+balance/income))) + (25 if expense/income<=.5 else (25*max(0,(1-expense/income)/.5) if expense/income<1 else 0)))))
+        answer = f"Сводка за месяц: доходы — {money(income)}, расходы — {money(expense)}, остаток — {money(balance)}. Ориентировочное финансовое здоровье — {score}/100. Спроси меня о расходах по категориям, кошельках, целях или платежах."
+    return {"answer": answer, "mode": "local"}
