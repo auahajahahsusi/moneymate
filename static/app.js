@@ -1,5 +1,6 @@
 const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();
-const initData=tg?.initData||"";const headers={"Content-Type":"application/json","X-Telegram-Init-Data":initData};
+const initData=tg?.initData||"";const headers={"Content-Type":"application/json","X-Telegram-Init-Data":localStorage.getItem("mm_session")||""};
+let currentProfile=null, selectedAvatar="👤";
 let kind="expense",currency="RUB",transactions=[],goals=[],recurring=[],wallets=[],limits=[];
 const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat("ru-RU",{style:"currency",currency,maximumFractionDigits:2}).format(Number(n||0));
@@ -54,31 +55,46 @@ $("calendarMonth").value=today().slice(0,7);$("calendarMonth").onchange=()=>rend
 $("addWallet").onclick=async()=>{const name=prompt('Название кошелька (например, Наличные)');if(!name)return;const balance=Number(prompt('Текущий остаток в ₽','0')||0);if(!Number.isFinite(balance)||balance<0){notify('Укажи корректную сумму');return}try{await api('/api/wallets',{method:'POST',body:JSON.stringify({name,kind:'cash',balance})});await renderWallets()}catch(e){notify(e.message)}};
 $("addLimit").onclick=async()=>{const category=prompt('Категория расходов (должна совпадать с категорией операции)');if(!category)return;const amount=Number(prompt('Лимит на месяц, ₽'));if(!Number.isFinite(amount)||amount<=0){notify('Укажи корректный лимит');return}try{await api('/api/limits',{method:'POST',body:JSON.stringify({category,amount})});await renderLimits()}catch(e){notify(e.message)}};
 $("exportData").onclick=async()=>{try{const data=await api('/api/export');const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='moneymate-backup.json';a.click();URL.revokeObjectURL(url);notify('Резервная копия скачана')}catch(e){notify(e.message)}};
-async function purchasePremium(){try{const invoice=await api("/api/premium/invoice",{method:"POST",body:"{}"});if(!tg?.openInvoice){notify("Оплата доступна при открытии приложения внутри Telegram.");return}tg.openInvoice(invoice.invoice_url,async status=>{if(status==="paid"){notify("Платёж принят. Активируем Premium…");setTimeout(checkAccess,1800)}else if(status==="failed"){notify("Не удалось провести оплату. Попробуй ещё раз.")}})}catch(e){notify(e.message)}}
-async function checkAccess(){
- const gate=$("accessGate"),title=$("gateTitle"),txt=$("gateText"),actions=$("gateActions");
- gate.classList.remove("hidden");
- if(!initData){title.textContent="Открой MoneyMate в Telegram";txt.textContent="Для безопасного входа запусти Mini App через своего Telegram-бота.";actions.innerHTML="";return}
- title.textContent="Проверяем доступ…";txt.textContent="Связываемся с MoneyMate. Обычно это занимает несколько секунд.";actions.innerHTML="";
- try{
-  const state=await api("/api/access");
-  if(!state.channel_member){title.textContent="Сначала подпишись на канал";txt.textContent="Подпишись на MoneyMateDiary, затем нажми «Проверить подписку».";actions.innerHTML='<button class="primary" id="joinChannel">Подписаться на канал</button><button class="secondary" id="checkChannel">Проверить подписку</button>';
-   $("joinChannel").onclick=()=>tg?.openTelegramLink("https://t.me/MoneyMateDiary");$("checkChannel").onclick=checkAccess;return;
-  }
-  title.textContent=state.plan==="premium"?"MoneyMate Premium активен 💚":"Ты в MoneyMate!";
-  txt.textContent=state.plan==="premium"?"У тебя активен Premium. Приятного использования!":"Ты используешь бесплатный тариф. Открой Premium, чтобы получить расширенные возможности.";
-  actions.innerHTML=state.plan==="premium"?'<button class="primary" id="enterApp">Открыть приложение</button><p class="access-small">Premium действует до '+new Date(state.premium_expires_at*1000).toLocaleDateString("ru-RU")+'</p>':'<button class="primary" id="buyPremium">Подключить Premium · 179 ⭐ / 30 дней</button><button class="secondary" id="enterFree">Продолжить бесплатно</button>';
-  if($("enterApp"))$("enterApp").onclick=()=>gate.classList.add("hidden");
-  if($("enterFree"))$("enterFree").onclick=()=>gate.classList.add("hidden");
-  if($("buyPremium"))$("buyPremium").onclick=purchasePremium;
-  gate.classList.add("hidden");
-  const premiumStatus=$("premiumStatus"),premiumBtn=$("premiumBuyHome");
-  if(premiumStatus)premiumStatus.textContent=state.plan==="premium"?"Premium активен до "+new Date(state.premium_expires_at*1000).toLocaleDateString("ru-RU"):"Расширенные возможности за 179 ⭐ / 30 дней";
-  if(premiumBtn){premiumBtn.textContent=state.plan==="premium"?"Premium активен ✓":"Подключить Premium · 179 ⭐";premiumBtn.disabled=state.plan==="premium";premiumBtn.onclick=purchasePremium;}
-  await refresh();
- }catch(e){title.textContent="Не удалось проверить доступ";txt.textContent=e.message;actions.innerHTML='<button class="primary" id="retryAccess">Повторить проверку</button>';$("retryAccess").onclick=checkAccess}
+async function purchasePremium(){try{if(!initData){notify("Оплата Premium доступна при открытии приложения внутри Telegram.");return}const r=await fetch("/api/premium/invoice",{method:"POST",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":initData},body:"{}"});const invoice=await r.json();if(!r.ok)throw new Error(invoice.detail||"Не удалось создать счёт");if(!tg?.openInvoice){notify("Открой MoneyMate внутри Telegram для оплаты.");return}tg.openInvoice(invoice.invoice_url,status=>{if(status==="paid")notify("Платёж принят. Premium активируется после подтверждения Telegram.");else if(status==="failed")notify("Не удалось провести оплату. Попробуй ещё раз.")})}catch(e){notify(e.message)}}
+async function authRequest(path,payload){
+ const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+ let data={};try{data=await r.json()}catch{}
+ if(!r.ok)throw new Error(data.detail||"Не удалось выполнить запрос");
+ return data;
 }
-(async()=>{if(!initData){await checkAccess();return}await checkAccess()})();
+function applyTheme(theme){document.documentElement.dataset.theme=theme||"green";localStorage.setItem("mm_theme",theme||"green")}
+function setAuthToken(token){localStorage.setItem("mm_session",token);headers["X-Telegram-Init-Data"]=token}
+function showAuthError(message){$("authError").textContent=message||""}
+function switchAuth(mode){
+ const login=mode==="login";$("loginForm").classList.toggle("hidden",!login);$("registerForm").classList.toggle("hidden",login);
+ $("showLogin").classList.toggle("active",login);$("showRegister").classList.toggle("active",!login);showAuthError("");
+}
+$("showLogin").onclick=()=>switchAuth("login");$("showRegister").onclick=()=>switchAuth("register");
+async function enterAccount(token){
+ setAuthToken(token);currentProfile=await api("/api/account/profile");applyTheme(currentProfile.theme);
+ document.body.classList.add("authenticated");$("authScreen").classList.add("hidden");
+ $("welcomeGreeting").textContent=`Здравствуйте, ${currentProfile.name}!`;
+ $("profileTrigger").textContent=currentProfile.avatar||"👤";
+ await refresh();
+}
+$("loginForm").onsubmit=async e=>{e.preventDefault();showAuthError("");try{const result=await authRequest("/api/auth/login",{login:$("loginName").value.trim(),password:$("loginPassword").value});await enterAccount(result.token)}catch(err){showAuthError(err.message)}};
+$("registerForm").onsubmit=async e=>{e.preventDefault();showAuthError("");try{const result=await authRequest("/api/auth/register",{name:$("registerDisplayName").value.trim(),login:$("registerLogin").value.trim(),password:$("registerPassword").value});await enterAccount(result.token)}catch(err){showAuthError(err.message)}};
+$("profileTrigger").onclick=()=>$("profileMenu").classList.toggle("hidden");
+$("openProfile").onclick=async()=>{$("profileMenu").classList.add("hidden");try{currentProfile=await api("/api/account/profile");$("profileName").value=currentProfile.name;$("profileLogin").value=currentProfile.login;selectedAvatar=currentProfile.avatar||"👤";renderAvatarChoices();openModal("profileModal")}catch(e){notify(e.message)}};
+$("openPreferences").onclick=()=>$("preferencesModal").classList.remove("hidden");
+$("logoutButton").onclick=async()=>{try{await api("/api/auth/logout",{method:"POST",body:"{}"})}catch(e){}localStorage.removeItem("mm_session");headers["X-Telegram-Init-Data"]="";document.body.classList.remove("authenticated");$("authScreen").classList.remove("hidden");$("profileMenu").classList.add("hidden");switchAuth("login")};
+const avatarOptions=["👤","😀","😎","🦊","🐼","🐸","🐱","🐻","🐯","🦁","🐧","🐨","🐵","🤖","👾","🌟","💎","🚀"];
+function renderAvatarChoices(){$("avatarChoices").innerHTML=avatarOptions.map(a=>`<button type="button" class="avatar-choice ${a===selectedAvatar?"selected":""}" data-avatar="${a}">${a}</button>`).join("");$("avatarChoices").querySelectorAll("[data-avatar]").forEach(b=>b.onclick=()=>{selectedAvatar=b.dataset.avatar;renderAvatarChoices()})}
+$("profileForm").onsubmit=async e=>{e.preventDefault();try{await api("/api/account/profile",{method:"PATCH",body:JSON.stringify({name:$("profileName").value.trim(),avatar:selectedAvatar,theme:document.documentElement.dataset.theme||"green"})});currentProfile=await api("/api/account/profile");$("welcomeGreeting").textContent=`Здравствуйте, ${currentProfile.name}!`;$("profileTrigger").textContent=currentProfile.avatar;closeModal("profileModal");notify("Профиль сохранён")}catch(err){notify(err.message)}};
+$("passwordForm").onsubmit=async e=>{e.preventDefault();try{await api("/api/account/password",{method:"POST",body:JSON.stringify({current_password:$("currentPassword").value,new_password:$("newPassword").value})});$("passwordForm").reset();notify("Пароль изменён")}catch(err){notify(err.message)}};
+$("themeChoices").querySelectorAll("[data-theme]").forEach(b=>b.onclick=async()=>{const theme=b.dataset.theme;try{const name=currentProfile?.name||$("welcomeGreeting").textContent.replace("Здравствуйте, ","").replace("!","");await api("/api/account/profile",{method:"PATCH",body:JSON.stringify({name,avatar:currentProfile?.avatar||"👤",theme})});applyTheme(theme);currentProfile=await api("/api/account/profile");notify("Тема применена")}catch(e){notify(e.message)}});
+async function bootAuth(){
+ const saved=localStorage.getItem("mm_session");
+ if(saved){try{await enterAccount(saved);return}catch(e){localStorage.removeItem("mm_session");headers["X-Telegram-Init-Data"]=""}}
+ document.body.classList.remove("authenticated");$("authScreen").classList.remove("hidden");
+}
+applyTheme(localStorage.getItem("mm_theme")||"green");
+bootAuth().catch(e=>{showAuthError(e.message);$("authScreen").classList.remove("hidden")});
 
 // MoneyMate AI assistant
 $("aiForm").onsubmit=async e=>{e.preventDefault();const q=$("aiQuestion").value.trim();if(!q)return;const out=$("aiAnswer");out.textContent="Думаю над ответом…";const btn=$("aiForm").querySelector("button[type=submit]");btn.disabled=true;btn.textContent="Обрабатываю…";try{const result=await api("/api/assistant",{method:"POST",body:JSON.stringify({question:q})});out.textContent=result.answer;$("aiQuestion").value=""}catch(err){out.textContent=err.message;notify(err.message)}finally{btn.disabled=false;btn.textContent="Спросить ИИ ✦"}};

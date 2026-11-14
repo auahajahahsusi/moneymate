@@ -1,7 +1,33 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b1110"><title>MoneyMate</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><div class="app">
-<header><div><div class="eyebrow">ТВОИ ДЕНЬГИ ПОД КОНТРОЛЕМ</div><h1>Money<span>Mate</span></h1></div><div class="avatar">MM</div></header>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b1110"><title>MoneyMate</title><link rel="stylesheet" href="/static/style.css?v=6.1"></head>
+<body>
+<div id="authScreen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-brand">Money<span>Mate</span></div>
+    <p class="auth-subtitle">Твои деньги под контролем</p>
+    <div class="auth-switch"><button id="showLogin" class="active">Вход</button><button id="showRegister">Регистрация</button></div>
+    <form id="loginForm" class="auth-form">
+      <label>Логин<input id="loginName" autocomplete="username" minlength="3" maxlength="24" required placeholder="Твой логин"></label>
+      <label>Пароль<input id="loginPassword" type="password" autocomplete="current-password" required placeholder="Твой пароль"></label>
+      <button class="primary" type="submit">Войти</button>
+    </form>
+    <form id="registerForm" class="auth-form hidden">
+      <label>Имя пользователя<input id="registerDisplayName" maxlength="40" required placeholder="Как к тебе обращаться"></label>
+      <label>Логин<input id="registerLogin" minlength="3" maxlength="24" pattern="[A-Za-z0-9_.-]+" required placeholder="Латиница, цифры, _ . -"></label>
+      <label>Пароль<input id="registerPassword" type="password" minlength="6" maxlength="128" autocomplete="new-password" required placeholder="Минимум 6 символов"></label>
+      <button class="primary" type="submit">Создать аккаунт</button>
+    </form>
+    <p id="authError" class="auth-error"></p>
+    <small>Аккаунт и финансовые данные сохраняются на сервере.</small>
+  </div>
+</div>
+<div class="app locked">
+<header><div><div class="eyebrow">ТВОИ ДЕНЬГИ ПОД КОНТРОЛЕМ</div><h1>Money<span>Mate</span></h1></div><button class="avatar profile-trigger" id="profileTrigger" aria-label="Открыть профиль">👤</button>
+<div class="profile-menu hidden" id="profileMenu">
+  <button id="openProfile">👤 Профиль</button>
+  <button id="openPreferences">⚙️ Настройки</button>
+  <button id="logoutButton">↪ Выйти</button>
+</div></header>
 <div id="notice" class="notice hidden"></div>
 <section class="hero card"><div class="muted">Общий баланс за месяц</div><div id="balance" class="balance">0 ₽</div><div class="stats"><div><span class="dot green"></span><small>Доходы</small><b id="income">0 ₽</b></div><div><span class="dot red"></span><small>Расходы</small><b id="expense">0 ₽</b></div></div></section>
 <nav class="tabs pill-nav" aria-label="Основное меню">
@@ -16,7 +42,7 @@
 <button class="tab" data-tab="assistant"><span class="nav-ico">✦</span><span>ИИ-помощник</span></button>
 </nav>
 <main>
-<section id="home" class="panel active"><div class="section-kicker">ФИНАНСОВАЯ СВОДКА</div>
+<section id="home" class="panel active"><div class="welcome-card"><div class="welcome-mark">M</div><div><div class="welcome-kicker">ЛИЧНЫЙ КАБИНЕТ</div><h2 id="welcomeGreeting">Здравствуйте!</h2><p>Рады видеть тебя снова в MoneyMate 💚</p></div></div><div class="section-kicker">ФИНАНСОВАЯ СВОДКА</div>
 <div class="card" style="margin:12px 0 18px;padding:16px"><div class="section-head" style="margin:0"><div><b>MoneyMate Premium</b><p class="muted" id="premiumStatus" style="margin:5px 0 0">Расширенные возможности за 179 ⭐ / месяц</p></div><span style="font-size:24px">✦</span></div><button class="primary" id="premiumBuyHome" style="width:100%;margin-top:12px">Подключить Premium · 179 ⭐</button></div>
 <div class="health-card card"><div class="health-top"><div><div class="muted">Финансовое здоровье</div><div class="health-score"><b id="healthScore">1</b><span>/ 100</span><em id="healthLabel">Нужно больше данных</em></div></div><div class="health-ring" id="healthRing"><span>♥</span></div></div><div class="track"><i id="healthBar" style="width:1%"></i></div><div id="healthHint" class="muted health-hint">Добавь доходы и расходы, чтобы получить оценку.</div><div class="health-parts" id="healthParts"></div></div>
 <div class="section-head"><h2>Расходы по категориям</h2><span id="monthLabel" class="muted"></span></div><div class="card"><div id="categoryChart" class="bars empty">Добавь первую операцию — здесь появится аналитика</div></div>
@@ -39,4 +65,33 @@
 <div id="contributeModal" class="modal hidden"><form id="contributeForm" class="sheet"><div class="sheet-top"><h2>Пополнить цель</h2><button type="button" class="close" data-close="contributeModal">×</button></div><input id="contributeId" type="hidden"><label>Сумма<input id="contributeAmount" type="number" min="0.01" step="0.01" required></label><button class="primary" type="submit">Добавить накопление</button></form></div>
 </div>
 <div id="accessGate" class="access-gate"><div class="access-card"><div class="access-logo">M</div><div class="eyebrow">ТВОИ ДЕНЬГИ ПОД КОНТРОЛЕМ</div><h2 id="gateTitle">Добро пожаловать в MoneyMate</h2><p id="gateText">Проверяем доступ…</p><div id="gateActions"></div><p class="access-small">Подписка на канал нужна для доступа к приложению. Premium оплачивается через Telegram Stars.</p></div></div>
-<script src="https://telegram.org/js/telegram-web-app.js"></script><script src="/static/app.js"></script></body></html>
+<script src="https://telegram.org/js/telegram-web-app.js"></script><script src="/static/app.js?v=6.1"></script> 
+<div class="modal hidden" id="profileModal"><div class="sheet">
+  <div class="sheet-top"><h2>Мой профиль</h2><button class="close" data-close="profileModal">×</button></div>
+  <form id="profileForm" class="form">
+    <label>Имя<input id="profileName" maxlength="40" required></label>
+    <label>Логин<input id="profileLogin" disabled></label>
+    <div><label>Аватар</label><div id="avatarChoices" class="avatar-choices"></div></div>
+    <button class="primary" type="submit">Сохранить профиль</button>
+  </form>
+  <div class="divider-line"></div>
+  <h3>Изменить пароль</h3>
+  <form id="passwordForm" class="form">
+    <label>Текущий пароль<input id="currentPassword" type="password" required></label>
+    <label>Новый пароль<input id="newPassword" type="password" minlength="6" required></label>
+    <button class="primary" type="submit">Изменить пароль</button>
+  </form>
+</div></div>
+<div class="modal hidden" id="preferencesModal"><div class="sheet">
+  <div class="sheet-top"><h2>Настройки</h2><button class="close" data-close="preferencesModal">×</button></div>
+  <h3>Оформление</h3><p class="muted">Выбери тему MoneyMate</p>
+  <div id="themeChoices" class="theme-choices">
+    <button data-theme="green"><i class="theme-dot green-dot"></i>Зелёная</button>
+    <button data-theme="dark"><i class="theme-dot dark-dot"></i>Тёмная</button>
+    <button data-theme="white"><i class="theme-dot white-dot"></i>Белая</button>
+    <button data-theme="gold"><i class="theme-dot gold-dot"></i>Золотая</button>
+    <button data-theme="red-dark"><i class="theme-dot red-dot"></i>Красно-тёмная</button>
+    <button data-theme="mono"><i class="theme-dot mono-dot"></i>Чёрно-белая</button>
+  </div>
+</div></div>
+</body></html>
