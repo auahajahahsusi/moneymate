@@ -1,4 +1,4 @@
-import os, json, sqlite3, hashlib, hmac, time, urllib.request, urllib.error, secrets, uuid
+import os, json, sqlite3, hashlib, hmac, time, urllib.request, urllib.error
 from urllib.parse import parse_qsl
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -28,11 +28,6 @@ def db():
 def init_db():
     with db() as c:
         c.executescript("""
-        CREATE TABLE IF NOT EXISTS accounts (
-          user_id TEXT PRIMARY KEY, first_name TEXT NOT NULL DEFAULT '',
-          last_name TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '',
-          created_at TEXT NOT NULL, last_login_at TEXT NOT NULL
-        );
         CREATE TABLE IF NOT EXISTS subscriptions (
           user_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'free',
           expires_at INTEGER DEFAULT 0, telegram_charge_id TEXT DEFAULT '',
@@ -72,16 +67,6 @@ def init_db():
           next_date TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS local_accounts (
-          user_id TEXT PRIMARY KEY, login TEXT NOT NULL UNIQUE COLLATE NOCASE,
-          display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
-          avatar TEXT NOT NULL DEFAULT '👤', theme TEXT NOT NULL DEFAULT 'green',
-          created_at TEXT NOT NULL, last_login_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS auth_sessions (
-          token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL,
-          expires_at INTEGER NOT NULL, created_at TEXT NOT NULL
-        );
         """)
 init_db()
 
@@ -103,25 +88,6 @@ def verify_init_data(init_data: str):
         return str(user["id"])
     except Exception:
         raise HTTPException(401, "Open MoneyMate from your Telegram bot")
-
-def telegram_profile(init_data: str) -> dict:
-    """Return Telegram profile fields only after initData signature validation."""
-    verify_init_data(init_data)
-    try:
-        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
-        return json.loads(pairs.get("user", "{}"))
-    except Exception:
-        raise HTTPException(401, "Не удалось прочитать профиль Telegram")
-
-def ensure_account(uid: str, profile: dict) -> dict:
-    first = str(profile.get("first_name") or "Пользователь")[:64]
-    last = str(profile.get("last_name") or "")[:64]
-    username = str(profile.get("username") or "")[:64]
-    now = datetime.now(timezone.utc).isoformat()
-    with db() as c:
-        c.execute("INSERT INTO accounts(user_id,first_name,last_name,username,created_at,last_login_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET first_name=excluded.first_name,last_name=excluded.last_name,username=excluded.username,last_login_at=excluded.last_login_at", (uid,first,last,username,now,now))
-        row = c.execute("SELECT * FROM accounts WHERE user_id=?", (uid,)).fetchone()
-    return dict(row)
 
 def telegram_api(method: str, payload: dict):
     if not BOT_TOKEN:
@@ -149,118 +115,10 @@ def is_channel_member(uid: str) -> bool:
         return False
 
 def current_user(x_telegram_init_data: str = Header(default="")):
-    # New local login sessions take precedence; legacy Telegram sessions remain supported.
-    if x_telegram_init_data:
-        token_hash = hashlib.sha256(x_telegram_init_data.encode()).hexdigest()
-        with db() as c:
-            row = c.execute("SELECT user_id,expires_at FROM auth_sessions WHERE token_hash=?", (token_hash,)).fetchone()
-            if row and int(row["expires_at"]) > int(time.time()):
-                return row["user_id"]
-            if row:
-                c.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash,))
     uid = verify_init_data(x_telegram_init_data)
     if not is_channel_member(uid):
         raise HTTPException(403, "Подпишись на Telegram-канал MoneyMate, чтобы пользоваться приложением")
     return uid
-
-def make_password_hash(password: str) -> str:
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 310000)
-    return salt.hex() + "$" + digest.hex()
-
-def verify_password(password: str, stored: str) -> bool:
-    try:
-        salt_hex, digest_hex = stored.split("$", 1)
-        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), 310000)
-        return hmac.compare_digest(digest.hex(), digest_hex)
-    except Exception:
-        return False
-
-def issue_session(uid: str) -> str:
-    token = secrets.token_urlsafe(40)
-    now = datetime.now(timezone.utc).isoformat()
-    with db() as c:
-        c.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
-                  (hashlib.sha256(token.encode()).hexdigest(), uid, int(time.time()) + 60*60*24*30, now))
-        c.execute("UPDATE local_accounts SET last_login_at=? WHERE user_id=?", (now, uid))
-    return token
-
-class RegisterIn(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
-    login: str = Field(min_length=3, max_length=24, pattern=r"^[A-Za-z0-9_.-]+$")
-    password: str = Field(min_length=6, max_length=128)
-
-class LoginIn(BaseModel):
-    login: str = Field(min_length=3, max_length=24)
-    password: str = Field(min_length=1, max_length=128)
-
-class ProfileUpdateIn(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
-    avatar: str = Field(min_length=1, max_length=12)
-    theme: str = Field(pattern=r"^(green|dark|white|gold|red-dark|mono)$")
-
-class PasswordUpdateIn(BaseModel):
-    current_password: str = Field(min_length=1, max_length=128)
-    new_password: str = Field(min_length=6, max_length=128)
-
-@app.post("/api/auth/register")
-def register(data: RegisterIn):
-    now = datetime.now(timezone.utc).isoformat()
-    uid = "local_" + uuid.uuid4().hex
-    with db() as c:
-        if c.execute("SELECT 1 FROM local_accounts WHERE login=? COLLATE NOCASE", (data.login.strip(),)).fetchone():
-            raise HTTPException(409, "Этот логин уже занят")
-        c.execute("INSERT INTO local_accounts(user_id,login,display_name,password_hash,avatar,theme,created_at,last_login_at) VALUES(?,?,?,?,?,?,?,?)",
-                  (uid, data.login.strip(), data.name.strip(), make_password_hash(data.password), "👤", "green", now, now))
-        c.execute("INSERT OR IGNORE INTO settings(user_id) VALUES(?)", (uid,))
-    token = issue_session(uid)
-    return {"token": token, "profile": {"name": data.name.strip(), "login": data.login.strip(), "avatar": "👤", "theme": "green"}}
-
-@app.post("/api/auth/login")
-def login(data: LoginIn):
-    with db() as c:
-        row = c.execute("SELECT * FROM local_accounts WHERE login=? COLLATE NOCASE", (data.login.strip(),)).fetchone()
-    if not row or not verify_password(data.password, row["password_hash"]):
-        raise HTTPException(401, "Неверный логин или пароль")
-    token = issue_session(row["user_id"])
-    return {"token": token, "profile": {"name": row["display_name"], "login": row["login"], "avatar": row["avatar"], "theme": row["theme"]}}
-
-@app.get("/api/account/profile")
-def get_local_profile(x_telegram_init_data: str = Header(default="")):
-    uid = current_user(x_telegram_init_data)
-    with db() as c:
-        row = c.execute("SELECT login,display_name,avatar,theme,created_at FROM local_accounts WHERE user_id=?", (uid,)).fetchone()
-    if not row:
-        raise HTTPException(404, "Локальный аккаунт не найден")
-    return {"name": row["display_name"], "login": row["login"], "avatar": row["avatar"], "theme": row["theme"], "created_at": row["created_at"]}
-
-@app.patch("/api/account/profile")
-def update_local_profile(data: ProfileUpdateIn, x_telegram_init_data: str = Header(default="")):
-    uid = current_user(x_telegram_init_data)
-    with db() as c:
-        cur = c.execute("UPDATE local_accounts SET display_name=?,avatar=?,theme=? WHERE user_id=?",
-                        (data.name.strip(), data.avatar, data.theme, uid))
-    if not cur.rowcount:
-        raise HTTPException(404, "Локальный аккаунт не найден")
-    return {"ok": True}
-
-@app.post("/api/account/password")
-def update_local_password(data: PasswordUpdateIn, x_telegram_init_data: str = Header(default="")):
-    uid = current_user(x_telegram_init_data)
-    with db() as c:
-        row = c.execute("SELECT password_hash FROM local_accounts WHERE user_id=?", (uid,)).fetchone()
-        if not row or not verify_password(data.current_password, row["password_hash"]):
-            raise HTTPException(400, "Текущий пароль указан неверно")
-        c.execute("UPDATE local_accounts SET password_hash=? WHERE user_id=?", (make_password_hash(data.new_password), uid))
-        c.execute("DELETE FROM auth_sessions WHERE user_id=? AND token_hash<>?", (uid, hashlib.sha256(x_telegram_init_data.encode()).hexdigest()))
-    return {"ok": True}
-
-@app.post("/api/auth/logout")
-def logout(x_telegram_init_data: str = Header(default="")):
-    token_hash = hashlib.sha256(x_telegram_init_data.encode()).hexdigest()
-    with db() as c:
-        c.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash,))
-    return {"ok": True}
 
 class TransactionIn(BaseModel):
     kind: str
@@ -307,8 +165,6 @@ async def register_telegram_webhook():
 @app.get("/api/access")
 def access(x_telegram_init_data: str = Header(default="")):
     uid = verify_init_data(x_telegram_init_data)
-    profile = telegram_profile(x_telegram_init_data)
-    account = ensure_account(uid, profile)
     member = is_channel_member(uid)
     with db() as c:
         row = c.execute("SELECT * FROM subscriptions WHERE user_id=?", (uid,)).fetchone()
@@ -316,7 +172,7 @@ def access(x_telegram_init_data: str = Header(default="")):
             c.execute("UPDATE subscriptions SET status='free' WHERE user_id=?", (uid,))
             row = c.execute("SELECT * FROM subscriptions WHERE user_id=?", (uid,)).fetchone()
     premium = bool(row and row["status"] == "premium" and row["expires_at"] > int(time.time()))
-    return {"channel_member": member, "channel": REQUIRED_CHANNEL, "plan": "premium" if premium else "free", "premium_expires_at": row["expires_at"] if premium else None, "stars_price": PREMIUM_STARS, "account": {"first_name": account["first_name"], "last_name": account["last_name"], "username": account["username"], "created_at": account["created_at"]}}
+    return {"channel_member": member, "channel": REQUIRED_CHANNEL, "plan": "premium" if premium else "free", "premium_expires_at": row["expires_at"] if premium else None, "stars_price": PREMIUM_STARS}
 
 @app.post("/api/premium/invoice")
 def premium_invoice(x_telegram_init_data: str = Header(default="")):
@@ -364,12 +220,6 @@ def telegram_webhook(update: dict, x_telegram_bot_api_secret_token: str = Header
 @app.get("/api/health")
 def health():
     return {"ok": True, "app": "MoneyMate"}
-
-@app.get("/api/profile")
-def profile(x_telegram_init_data: str = Header(default="")):
-    uid = current_user(x_telegram_init_data)
-    profile_data = telegram_profile(x_telegram_init_data)
-    return {"account": ensure_account(uid, profile_data)}
 
 @app.get("/api/me")
 def me(user_id: str = Header(default="", alias="X-Telegram-Init-Data")):
@@ -653,7 +503,7 @@ def summary(x_telegram_init_data: str = Header(default="")):
 
 @app.get("/")
 def index():
-    return FileResponse("static/index.html", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"})
+    return FileResponse("static/index.html")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
