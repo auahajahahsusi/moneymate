@@ -653,7 +653,7 @@ def summary(x_telegram_init_data: str = Header(default="")):
 
 @app.get("/")
 def index():
-    return FileResponse("static/index.html")
+    return FileResponse("static/index.html", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"})
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
