@@ -67,6 +67,15 @@ def init_db():
           next_date TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS payment_events (
+          telegram_charge_id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+          amount INTEGER NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS premium_preferences (
+          user_id TEXT PRIMARY KEY, theme TEXT NOT NULL DEFAULT 'default',
+          notifications_enabled INTEGER NOT NULL DEFAULT 1,
+          updated_at TEXT NOT NULL
+        );
         """)
 init_db()
 
@@ -119,6 +128,26 @@ def current_user(x_telegram_init_data: str = Header(default="")):
     if not is_channel_member(uid):
         raise HTTPException(403, "Подпишись на Telegram-канал MoneyMate, чтобы пользоваться приложением")
     return uid
+
+FREE_LIMITS = {"wallets": 2, "goals": 3, "budgets": 3}
+
+def is_premium(uid: str) -> bool:
+    with db() as c:
+        row = c.execute("SELECT status, expires_at FROM subscriptions WHERE user_id=?", (uid,)).fetchone()
+    return bool(row and row["status"] == "premium" and int(row["expires_at"] or 0) > int(time.time()))
+
+def require_premium(uid: str):
+    if not is_premium(uid):
+        raise HTTPException(403, "Эта возможность доступна в MoneyMate Premium. Подключи Premium за 179 ⭐ на 30 дней.")
+
+def enforce_free_limit(uid: str, table: str, label: str):
+    if is_premium(uid):
+        return
+    maximum = FREE_LIMITS[table]
+    with db() as c:
+        count = c.execute(f"SELECT COUNT(*) FROM {table if table != 'budgets' else 'spending_limits'} WHERE user_id=?", (uid,)).fetchone()[0]
+    if count >= maximum:
+        raise HTTPException(403, f"На бесплатном тарифе доступно до {maximum} {label}. Premium снимает ограничение.")
 
 class TransactionIn(BaseModel):
     kind: str
@@ -199,7 +228,16 @@ def telegram_webhook(update: dict, x_telegram_bot_api_secret_token: str = Header
         raise HTTPException(403, "Invalid webhook secret")
     if "pre_checkout_query" in update:
         query = update["pre_checkout_query"]
-        telegram_api("answerPreCheckoutQuery", {"pre_checkout_query_id": query["id"], "ok": True})
+        payload = str(query.get("invoice_payload", ""))
+        parts = payload.split(":")
+        valid = (len(parts) == 3 and parts[0] == "moneymate_premium"
+                 and str(query.get("from", {}).get("id", "")) == parts[1]
+                 and query.get("currency") == "XTR"
+                 and int(query.get("total_amount", 0)) == PREMIUM_STARS)
+        telegram_api("answerPreCheckoutQuery", {
+            "pre_checkout_query_id": query["id"], "ok": valid,
+            **({"error_message": "Счёт MoneyMate Premium недействителен. Создай новый счёт."} if not valid else {})
+        })
         return {"ok": True}
     message = update.get("message") or update.get("edited_message") or {}
     payment = message.get("successful_payment")
@@ -211,10 +249,19 @@ def telegram_webhook(update: dict, x_telegram_bot_api_secret_token: str = Header
         uid = parts[1]
         if str(message.get("from", {}).get("id", "")) != uid or payment.get("currency") != "XTR" or int(payment.get("total_amount", 0)) != PREMIUM_STARS:
             raise HTTPException(400, "Payment payload mismatch")
+        charge_id = payment.get("telegram_payment_charge_id", "")
+        if not charge_id:
+            raise HTTPException(400, "Missing Telegram payment charge id")
         expiry = int(payment.get("subscription_expiration_date") or (int(time.time()) + 2592000))
         now = datetime.now(timezone.utc).isoformat()
         with db() as c:
-            c.execute("INSERT INTO subscriptions(user_id,status,expires_at,telegram_charge_id,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET status='premium',expires_at=excluded.expires_at,telegram_charge_id=excluded.telegram_charge_id,updated_at=excluded.updated_at", (uid, "premium", expiry, payment.get("telegram_payment_charge_id", ""), now))
+            # Telegram may retry webhook delivery. A charge is applied only once.
+            already = c.execute("SELECT 1 FROM payment_events WHERE telegram_charge_id=?", (charge_id,)).fetchone()
+            if not already:
+                c.execute("INSERT INTO payment_events(telegram_charge_id,user_id,amount,currency,created_at) VALUES(?,?,?,?,?)",
+                          (charge_id, uid, int(payment.get("total_amount", 0)), payment.get("currency", ""), now))
+                c.execute("INSERT INTO subscriptions(user_id,status,expires_at,telegram_charge_id,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET status='premium',expires_at=MAX(subscriptions.expires_at,excluded.expires_at),telegram_charge_id=excluded.telegram_charge_id,updated_at=excluded.updated_at",
+                          (uid, "premium", expiry, charge_id, now))
     return {"ok": True}
 
 @app.get("/api/health")
@@ -269,6 +316,7 @@ def goals(x_telegram_init_data: str = Header(default="")):
 @app.post("/api/goals")
 def add_goal(data: GoalIn, x_telegram_init_data: str = Header(default="")):
     uid = current_user(x_telegram_init_data)
+    enforce_free_limit(uid, "goals", "целей")
     now = datetime.now(timezone.utc).isoformat()
     with db() as c:
         cur = c.execute("INSERT INTO goals(user_id,title,target,saved,deadline,created_at) VALUES(?,?,?,?,?,?)",
@@ -390,6 +438,7 @@ def get_wallets(x_telegram_init_data: str = Header(default="")):
 @app.post("/api/wallets")
 def create_wallet(data: WalletIn, x_telegram_init_data: str = Header(default="")):
     uid = current_user(x_telegram_init_data)
+    enforce_free_limit(uid, "wallets", "кошельков")
     now = datetime.now(timezone.utc).isoformat()
     with db() as c:
         cur = c.execute("INSERT INTO wallets(user_id,name,kind,balance,created_at) VALUES(?,?,?,?,?)", (uid,data.name.strip(),data.kind,data.balance,now))
@@ -414,6 +463,10 @@ def get_limits(x_telegram_init_data: str = Header(default="")):
 @app.post("/api/limits")
 def save_limit(data: LimitIn, x_telegram_init_data: str = Header(default="")):
     uid = current_user(x_telegram_init_data)
+    with db() as c:
+        exists = c.execute("SELECT 1 FROM spending_limits WHERE user_id=? AND category=?", (uid, data.category.strip())).fetchone()
+    if not exists:
+        enforce_free_limit(uid, "budgets", "лимитов")
     with db() as c:
         c.execute("INSERT INTO spending_limits(user_id,category,amount,created_at) VALUES(?,?,?,?) ON CONFLICT(user_id,category) DO UPDATE SET amount=excluded.amount", (uid,data.category.strip(),data.amount,datetime.now(timezone.utc).isoformat()))
     return {"ok":True}
@@ -501,6 +554,76 @@ def summary(x_telegram_init_data: str = Header(default="")):
       "categories": [dict(r) for r in cats], "settings": dict(settings), "month": month,
       "financial_health": {"score": score, "parts": score_parts, "hint": score_hint}}
 
+@app.get("/api/premium/insights")
+def premium_insights(x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    require_premium(uid)
+    today = datetime.now().date()
+    month = today.strftime("%Y-%m")
+    days_in_month = __import__("calendar").monthrange(today.year, today.month)[1]
+    days_left = max(1, days_in_month - today.day + 1)
+    with db() as c:
+        tx = [dict(r) for r in c.execute(
+            "SELECT kind,amount,category,happened_at FROM transactions WHERE user_id=? AND substr(happened_at,1,7)=?",
+            (uid, month)).fetchall()]
+        limits = [dict(r) for r in c.execute(
+            "SELECT l.category,l.amount,COALESCE(SUM(t.amount),0) spent FROM spending_limits l LEFT JOIN transactions t ON t.user_id=l.user_id AND t.category=l.category AND t.kind='expense' AND substr(t.happened_at,1,7)=? WHERE l.user_id=? GROUP BY l.id",
+            (month, uid)).fetchall()]
+        prefs = c.execute("SELECT * FROM premium_preferences WHERE user_id=?", (uid,)).fetchone()
+    income = sum(float(x["amount"]) for x in tx if x["kind"] == "income")
+    expense = sum(float(x["amount"]) for x in tx if x["kind"] == "expense")
+    spent_daily = expense / max(1, today.day)
+    forecast = spent_daily * days_in_month
+    remaining = income - expense
+    categories = {}
+    for item in tx:
+        if item["kind"] == "expense":
+            categories[item["category"]] = categories.get(item["category"], 0) + float(item["amount"])
+    alerts = []
+    for limit in limits:
+        pct = (float(limit["spent"]) / max(float(limit["amount"]), 0.01)) * 100
+        if pct >= 100:
+            alerts.append({"level":"danger","title":f"Лимит «{limit['category']}» превышен","text":f"Потрачено {pct:.0f}% месячного лимита."})
+        elif pct >= 80:
+            alerts.append({"level":"warning","title":f"Лимит «{limit['category']}» почти исчерпан","text":f"Использовано {pct:.0f}% лимита."})
+    if income > 0 and forecast > income:
+        alerts.append({"level":"warning","title":"Расходы могут превысить доходы","text":"При текущем темпе прогноз расходов выше дохода за месяц."})
+    if not tx:
+        alerts.append({"level":"info","title":"Добавь операции","text":"Когда появятся данные, здесь будут прогноз и персональные финансовые сигналы."})
+    theme = prefs["theme"] if prefs else "default"
+    notifications_enabled = bool(prefs["notifications_enabled"]) if prefs else True
+    return {
+        "month": month, "income": round(income,2), "expense": round(expense,2),
+        "remaining": round(remaining,2), "forecast_expense": round(forecast,2),
+        "forecast_balance": round(income-forecast,2), "days_left": days_left,
+        "categories": [{"category":k,"amount":round(v,2)} for k,v in sorted(categories.items(), key=lambda kv:kv[1], reverse=True)],
+        "alerts": alerts, "theme": theme, "notifications_enabled": notifications_enabled,
+    }
+
+class PremiumPreferencesIn(BaseModel):
+    theme: str = Field(default="default", pattern="^(default|emerald|blackgold|purple)$")
+    notifications_enabled: bool = True
+
+@app.get("/api/premium/preferences")
+def get_premium_preferences(x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    require_premium(uid)
+    with db() as c:
+        row = c.execute("SELECT * FROM premium_preferences WHERE user_id=?", (uid,)).fetchone()
+        if not row:
+            c.execute("INSERT INTO premium_preferences(user_id,updated_at) VALUES(?,?)", (uid, datetime.now(timezone.utc).isoformat()))
+            row = c.execute("SELECT * FROM premium_preferences WHERE user_id=?", (uid,)).fetchone()
+    return {"theme":row["theme"], "notifications_enabled":bool(row["notifications_enabled"])}
+
+@app.put("/api/premium/preferences")
+def save_premium_preferences(data: PremiumPreferencesIn, x_telegram_init_data: str = Header(default="")):
+    uid = current_user(x_telegram_init_data)
+    require_premium(uid)
+    with db() as c:
+        c.execute("INSERT INTO premium_preferences(user_id,theme,notifications_enabled,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET theme=excluded.theme,notifications_enabled=excluded.notifications_enabled,updated_at=excluded.updated_at",
+                  (uid,data.theme,int(data.notifications_enabled),datetime.now(timezone.utc).isoformat()))
+    return {"ok":True, "theme":data.theme, "notifications_enabled":data.notifications_enabled}
+
 @app.get("/")
 def index():
     return FileResponse("static/index.html")
@@ -514,6 +637,7 @@ class AIQuestion(BaseModel):
 @app.post("/api/assistant")
 def financial_assistant(data: AIQuestion, x_telegram_init_data: str = Header(default="")):
     uid = current_user(x_telegram_init_data)
+    require_premium(uid)
     question = data.question.lower()
     month = datetime.now().strftime("%Y-%m")
     with db() as c:

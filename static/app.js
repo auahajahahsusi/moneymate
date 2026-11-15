@@ -1,6 +1,6 @@
 const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();
 const initData=tg?.initData||"";const headers={"Content-Type":"application/json","X-Telegram-Init-Data":initData};
-let kind="expense",currency="RUB",transactions=[],goals=[],recurring=[],wallets=[],limits=[];
+let kind="expense",currency="RUB",transactions=[],goals=[],recurring=[],wallets=[],limits=[],accessState=null;
 const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat("ru-RU",{style:"currency",currency,maximumFractionDigits:2}).format(Number(n||0));
 const today=()=>new Date().toISOString().slice(0,10);
@@ -30,7 +30,7 @@ el.querySelectorAll("[data-rdel]").forEach(b=>b.onclick=async()=>{if(confirm("У
 async function renderCalendar(){const month=$("calendarMonth").value||today().slice(0,7);const d=await api(`/api/calendar?month=${month}`);const el=$("calendarEvents");if(!d.events.length){el.innerHTML='<div class="empty card">На этот месяц пока нет операций и запланированных платежей.</div>';return}d.events.sort((a,b)=>a.date.localeCompare(b.date));el.innerHTML=d.events.map(e=>`<div class="tx"><div class="tx-icon ${e.kind==='expense'?'out':''}">${e.source==='planned'?'◷':e.kind==='income'?'↗':'↘'}</div><div class="tx-main"><b>${esc(e.category)}</b><small>${e.date} · ${e.source==='planned'?'Запланировано':'Проведено'}</small></div><div class="tx-amount ${e.kind==='expense'?'out':''}">${e.kind==='income'?'+':'−'}${money(e.amount)}</div></div>`).join("")}
 async function renderWallets(){wallets=await api('/api/wallets');const el=$("walletList");el.innerHTML=wallets.length?wallets.map(w=>`<div class="goal"><div class="goal-top"><div><h3>${esc(w.name)}</h3><p>${esc(w.kind)}</p></div><button class="delete" data-wdel="${w.id}">×</button></div><b>${money(w.balance)}</b></div>`).join(''):'<div class="empty card">Добавь карту, наличные или накопительный счёт.</div>';el.querySelectorAll('[data-wdel]').forEach(b=>b.onclick=async()=>{if(confirm('Удалить кошелёк?')){await api(`/api/wallets/${b.dataset.wdel}`,{method:'DELETE'});renderWallets()}})}
 async function renderLimits(){limits=await api('/api/limits');const el=$("limitList");el.innerHTML=limits.length?limits.map(l=>{const pct=Math.min(100,l.spent/l.amount*100);return `<div class="goal"><div class="goal-top"><div><h3>${esc(l.category)}</h3><p>Потрачено ${money(l.spent)} из ${money(l.amount)}</p></div><button class="delete" data-ldel="${l.id}">×</button></div><div class="track"><i style="width:${pct}%;background:${pct>=100?'#ef4444':''}"></i></div><small>${pct.toFixed(0)}% лимита использовано</small></div>`}).join(''):'<div class="empty card">Лимитов пока нет.</div>';el.querySelectorAll('[data-ldel]').forEach(b=>b.onclick=async()=>{await api(`/api/limits/${b.dataset.ldel}`,{method:'DELETE'});renderLimits()})}
-async function refresh(){[transactions,goals,recurring]=await Promise.all([api("/api/transactions"),api("/api/goals"),api("/api/recurring")]);await renderSummary();renderTransactions();renderGoals();renderRecurring();await Promise.all([renderWallets(),renderLimits(),renderCalendar()])}
+async function refresh(){[transactions,goals,recurring]=await Promise.all([api("/api/transactions"),api("/api/goals"),api("/api/recurring")]);await renderSummary();renderTransactions();renderGoals();renderRecurring();await Promise.all([renderWallets(),renderLimits(),renderCalendar()]);if(accessState?.plan==="premium")await loadPremiumInsights()}
 const categoryOptions={expense:["Продукты","Жильё","Коммунальные услуги","Транспорт","Здоровье","Покупки","Одежда","Развлечения","Кафе и рестораны","Подписки","Образование","Путешествия","Другое"],income:["Зарплата","Фриланс","Бизнес","Подработка","Инвестиции","Подарок","Возврат средств","Проценты и кешбэк","Другое"]};
 function updateCategoryOptions(selected=""){const select=$("category");const list=categoryOptions[kind];select.innerHTML=list.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");if(selected&&list.includes(selected))select.value=selected}
 function startTx(k="expense"){$("txForm").reset();kind=k;updateCategoryOptions();
@@ -54,6 +54,34 @@ $("calendarMonth").value=today().slice(0,7);$("calendarMonth").onchange=()=>rend
 $("addWallet").onclick=async()=>{const name=prompt('Название кошелька (например, Наличные)');if(!name)return;const balance=Number(prompt('Текущий остаток в ₽','0')||0);if(!Number.isFinite(balance)||balance<0){notify('Укажи корректную сумму');return}try{await api('/api/wallets',{method:'POST',body:JSON.stringify({name,kind:'cash',balance})});await renderWallets()}catch(e){notify(e.message)}};
 $("addLimit").onclick=async()=>{const category=prompt('Категория расходов (должна совпадать с категорией операции)');if(!category)return;const amount=Number(prompt('Лимит на месяц, ₽'));if(!Number.isFinite(amount)||amount<=0){notify('Укажи корректный лимит');return}try{await api('/api/limits',{method:'POST',body:JSON.stringify({category,amount})});await renderLimits()}catch(e){notify(e.message)}};
 $("exportData").onclick=async()=>{try{const data=await api('/api/export');const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='moneymate-backup.json';a.click();URL.revokeObjectURL(url);notify('Резервная копия скачана')}catch(e){notify(e.message)}};
+function applyTheme(theme){
+ document.documentElement.dataset.theme=theme||"default";
+ document.querySelectorAll("[data-theme]").forEach(b=>b.classList.toggle("selected",b.dataset.theme===(theme||"default")));
+}
+function renderPremiumInsights(data){
+ $("premiumLocked").classList.add("hidden");$("premiumContent").classList.remove("hidden");
+ $("forecastExpense").textContent=money(data.forecast_expense);
+ $("forecastBalance").textContent=money(data.forecast_balance);
+ $("forecastDays").textContent=`Осталось дней: ${data.days_left}`;
+ const alerts=$("premiumAlerts");
+ alerts.innerHTML=(data.alerts||[]).map(a=>`<div class="premium-alert ${esc(a.level)}"><b>${esc(a.title)}</b><small>${esc(a.text)}</small></div>`).join("")||'<div class="premium-alert info">Пока всё спокойно. Продолжай записывать операции.</div>';
+ $("premiumCategories").innerHTML=(data.categories||[]).slice(0,5).map(x=>`<div class="premium-category"><span>${esc(x.category)}</span><b>${money(x.amount)}</b></div>`).join("")||'<small class="muted">Пока недостаточно данных.</small>';
+ $("premiumNotifications").checked=!!data.notifications_enabled;
+ applyTheme(data.theme);
+}
+async function loadPremiumInsights(){
+ if(!accessState||accessState.plan!=="premium")return;
+ try{const d=await api("/api/premium/insights");renderPremiumInsights(d)}catch(e){if(e.message.includes("Premium"))notify(e.message);else console.warn(e)}
+}
+document.querySelectorAll("[data-theme]").forEach(b=>b.addEventListener("click",async()=>{
+ if(!accessState||accessState.plan!=="premium"){notify("Темы доступны в Premium");return}
+ const theme=b.dataset.theme;
+ try{await api("/api/premium/preferences",{method:"PUT",body:JSON.stringify({theme,notifications_enabled:$("premiumNotifications").checked})});applyTheme(theme);notify("Тема обновлена")}catch(e){notify(e.message)}
+}));
+$("premiumNotifications").onchange=async()=>{
+ try{await api("/api/premium/preferences",{method:"PUT",body:JSON.stringify({theme:document.documentElement.dataset.theme||"default",notifications_enabled:$("premiumNotifications").checked})});notify("Настройки уведомлений сохранены")}catch(e){notify(e.message);$("premiumNotifications").checked=!$("premiumNotifications").checked}
+};
+$("premiumUnlock").onclick=()=>purchasePremium();
 async function purchasePremium(){try{const invoice=await api("/api/premium/invoice",{method:"POST",body:"{}"});if(!tg?.openInvoice){notify("Оплата доступна при открытии приложения внутри Telegram.");return}tg.openInvoice(invoice.invoice_url,async status=>{if(status==="paid"){notify("Платёж принят. Активируем Premium…");setTimeout(checkAccess,1800)}else if(status==="failed"){notify("Не удалось провести оплату. Попробуй ещё раз.")}})}catch(e){notify(e.message)}}
 async function checkAccess(){
  const gate=$("accessGate"),title=$("gateTitle"),txt=$("gateText"),actions=$("gateActions");
@@ -61,7 +89,7 @@ async function checkAccess(){
  if(!initData){title.textContent="Открой MoneyMate в Telegram";txt.textContent="Для безопасного входа запусти Mini App через своего Telegram-бота.";actions.innerHTML="";return}
  title.textContent="Проверяем доступ…";txt.textContent="Связываемся с MoneyMate. Обычно это занимает несколько секунд.";actions.innerHTML="";
  try{
-  const state=await api("/api/access");
+  const state=await api("/api/access");accessState=state;
   if(!state.channel_member){title.textContent="Сначала подпишись на канал";txt.textContent="Подпишись на MoneyMateDiary, затем нажми «Проверить подписку».";actions.innerHTML='<button class="primary" id="joinChannel">Подписаться на канал</button><button class="secondary" id="checkChannel">Проверить подписку</button>';
    $("joinChannel").onclick=()=>tg?.openTelegramLink("https://t.me/MoneyMateDiary");$("checkChannel").onclick=checkAccess;return;
   }
@@ -75,10 +103,18 @@ async function checkAccess(){
   const premiumStatus=$("premiumStatus"),premiumBtn=$("premiumBuyHome");
   if(premiumStatus)premiumStatus.textContent=state.plan==="premium"?"Premium активен до "+new Date(state.premium_expires_at*1000).toLocaleDateString("ru-RU"):"Расширенные возможности за 179 ⭐ / 30 дней";
   if(premiumBtn){premiumBtn.textContent=state.plan==="premium"?"Premium активен ✓":"Подключить Premium · 179 ⭐";premiumBtn.disabled=state.plan==="premium";premiumBtn.onclick=purchasePremium;}
+  $("premiumLocked").classList.toggle("hidden",state.plan==="premium");
+  $("premiumContent").classList.toggle("hidden",state.plan!=="premium");
+  $("assistantPlanLabel").textContent=state.plan==="premium"?"Включено в Premium":"Только Premium · 179 ⭐ / 30 дней";
+  $("aiQuestion").disabled=state.plan!=="premium";
+  $("aiForm").querySelector("button[type=submit]").disabled=state.plan!=="premium";
+  $("aiAnswer").textContent=state.plan==="premium"?"Привет! Я помогу разобраться с бюджетом, расходами и накоплениями. Задай вопрос ниже.":"Личный финансовый помощник входит в Premium. Подключи Premium, чтобы получать разбор своих доходов, расходов, целей и платежей.";
+  $("premiumUnlock").textContent=state.plan==="premium"?"Premium активен":"Открыть Premium · 179 ⭐";
+  $("premiumUnlock").disabled=state.plan==="premium";
   await refresh();
  }catch(e){title.textContent="Не удалось проверить доступ";txt.textContent=e.message;actions.innerHTML='<button class="primary" id="retryAccess">Повторить проверку</button>';$("retryAccess").onclick=checkAccess}
 }
 (async()=>{if(!initData){await checkAccess();return}await checkAccess()})();
 
 // MoneyMate AI assistant
-$("aiForm").onsubmit=async e=>{e.preventDefault();const q=$("aiQuestion").value.trim();if(!q)return;const out=$("aiAnswer");out.textContent="Думаю над ответом…";const btn=$("aiForm").querySelector("button[type=submit]");btn.disabled=true;btn.textContent="Обрабатываю…";try{const result=await api("/api/assistant",{method:"POST",body:JSON.stringify({question:q})});out.textContent=result.answer;$("aiQuestion").value=""}catch(err){out.textContent=err.message;notify(err.message)}finally{btn.disabled=false;btn.textContent="Спросить ИИ ✦"}};
+$("aiForm").onsubmit=async e=>{e.preventDefault();const q=$("aiQuestion").value.trim();if(!q)return;const out=$("aiAnswer");out.textContent="Думаю над ответом…";const btn=$("aiForm").querySelector("button[type=submit]");btn.disabled=true;btn.textContent="Обрабатываю…";try{const result=await api("/api/assistant",{method:"POST",body:JSON.stringify({question:q})});out.textContent=result.answer;$("aiQuestion").value=""}catch(err){out.textContent=err.message;notify(err.message)}finally{btn.disabled=false;btn.textContent="Получить финансовый разбор ✦"}};
