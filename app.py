@@ -242,33 +242,33 @@ def telegram_webhook(update: dict, x_telegram_bot_api_secret_token: str = Header
     message = update.get("message") or update.get("edited_message") or {}
     
       
-        text = message.get("text", "")
-        command = text.split(maxsplit=1)[0].split("@")[0] if text.split() else ""
-    
-        if command == "/start":
-            web_app_url = PUBLIC_BASE_URL or "https://moneymate-1g70.onrender.com"
-    
-            telegram_api("sendMessage", {
-                "chat_id": message["chat"]["id"],
-                "text": (
-                    "👋 Добро пожаловать в MoneyMate!\n\n"
-                    "Твой личный помощник в управлении финансами 💚\n\n"
-                    "💸 Учитывай доходы и расходы.\n"
-                    "🎯 Копи на свои цели.\n"
-                    "📊 Контролируй бюджет.\n"
-                    "👑 Открывай дополнительные возможности с Premium.\n\n"
-                    "Готов взять свои деньги под контроль?"
-                ),
-                "reply_markup": {
-                    "inline_keyboard": [[
-                        {
-                            "text": "💚 Открыть MoneyMate",
-                            "web_app": {"url": web_app_url}
-                        }
-                    ]]
-                }
-            })
-            return {"ok": True}
+    text = message.get("text", "")
+    command = text.split(maxsplit=1)[0].split("@")[0] if text.split() else ""
+
+    if command == "/start":
+        web_app_url = PUBLIC_BASE_URL or "https://moneymate-1g70.onrender.com"
+
+        telegram_api("sendMessage", {
+            "chat_id": message["chat"]["id"],
+            "text": (
+                "👋 Добро пожаловать в MoneyMate!\n\n"
+                "Твой личный помощник в управлении финансами 💚\n\n"
+                "💸 Учитывай доходы и расходы.\n"
+                "🎯 Копи на свои цели.\n"
+                "📊 Контролируй бюджет.\n"
+                "👑 Открывай дополнительные возможности с Premium.\n\n"
+                "Готов взять свои деньги под контроль?"
+            ),
+            "reply_markup": {
+                "inline_keyboard": [[
+                    {
+                        "text": "💚 Открыть MoneyMate",
+                        "web_app": {"url": web_app_url}
+                    }
+                ]]
+            }
+        })
+        return {"ok": True}
     
         payment = message.get("successful_payment")
         if payment:
