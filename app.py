@@ -244,7 +244,11 @@ def telegram_webhook(update: dict, x_telegram_bot_api_secret_token: str = Header
     text = message.get("text", "")
     if text.split(maxsplit=1)[0].split("@")[0] == "/start" if text.split() else False:
         web_app_url = PUBLIC_BASE_URL or "https://moneymate-1g70.onrender.com"
+                return {"ok": True}
     
+        payment = message.get("successful_payment")
+        if payment:
+        payload = payment.get("invoice_payload", "")
         telegram_api("sendMessage", {
             "chat_id": message["chat"]["id"],
             "text": (
