@@ -270,29 +270,29 @@ def telegram_webhook(update: dict, x_telegram_bot_api_secret_token: str = Header
         })
         return {"ok": True}
     
-        payment = message.get("successful_payment")
-        if payment:
+    payment = message.get("successful_payment")
+    if payment:
 
-            payload = payment.get("invoice_payload", "")
-            parts = payload.split(":")
-            if len(parts) != 3 or parts[0] != "moneymate_premium":
-                return {"ok": True}
-            uid = parts[1]
-            if str(message.get("from", {}).get("id", "")) != uid or payment.get("currency") != "XTR" or int(payment.get("total_amount", 0)) != PREMIUM_STARS:
-                raise HTTPException(400, "Payment payload mismatch")
-            charge_id = payment.get("telegram_payment_charge_id", "")
-            if not charge_id:
-                raise HTTPException(400, "Missing Telegram payment charge id")
-            expiry = int(payment.get("subscription_expiration_date") or (int(time.time()) + 2592000))
-            now = datetime.now(timezone.utc).isoformat()
-            with db() as c:
-                # Telegram may retry webhook delivery. A charge is applied only once.
-                already = c.execute("SELECT 1 FROM payment_events WHERE telegram_charge_id=?", (charge_id,)).fetchone()
-                if not already:
-                    c.execute("INSERT INTO payment_events(telegram_charge_id,user_id,amount,currency,created_at) VALUES(?,?,?,?,?)",
-                              (charge_id, uid, int(payment.get("total_amount", 0)), payment.get("currency", ""), now))
-                    c.execute("INSERT INTO subscriptions(user_id,status,expires_at,telegram_charge_id,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET status='premium',expires_at=MAX(subscriptions.expires_at,excluded.expires_at),telegram_charge_id=excluded.telegram_charge_id,updated_at=excluded.updated_at",
-                              (uid, "premium", expiry, charge_id, now))
+        payload = payment.get("invoice_payload", "")
+        parts = payload.split(":")
+        if len(parts) != 3 or parts[0] != "moneymate_premium":
+            return {"ok": True}
+        uid = parts[1]
+        if str(message.get("from", {}).get("id", "")) != uid or payment.get("currency") != "XTR" or int(payment.get("total_amount", 0)) != PREMIUM_STARS:
+            raise HTTPException(400, "Payment payload mismatch")
+        charge_id = payment.get("telegram_payment_charge_id", "")
+        if not charge_id:
+            raise HTTPException(400, "Missing Telegram payment charge id")
+        expiry = int(payment.get("subscription_expiration_date") or (int(time.time()) + 2592000))
+        now = datetime.now(timezone.utc).isoformat()
+        with db() as c:
+            # Telegram may retry webhook delivery. A charge is applied only once.
+            already = c.execute("SELECT 1 FROM payment_events WHERE telegram_charge_id=?", (charge_id,)).fetchone()
+            if not already:
+                c.execute("INSERT INTO payment_events(telegram_charge_id,user_id,amount,currency,created_at) VALUES(?,?,?,?,?)",
+                          (charge_id, uid, int(payment.get("total_amount", 0)), payment.get("currency", ""), now))
+                c.execute("INSERT INTO subscriptions(user_id,status,expires_at,telegram_charge_id,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET status='premium',expires_at=MAX(subscriptions.expires_at,excluded.expires_at),telegram_charge_id=excluded.telegram_charge_id,updated_at=excluded.updated_at",
+                          (uid, "premium", expiry, charge_id, now))
     return {"ok": True}
 
 @app.get("/api/health")
