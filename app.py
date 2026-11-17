@@ -188,6 +188,7 @@ async def register_telegram_webhook():
                 "secret_token": TELEGRAM_WEBHOOK_SECRET,
                 "allowed_updates": ["message", "pre_checkout_query"],
             })
+            print("Telegram webhook registered:", PUBLIC_BASE_URL + "/api/telegram/webhook")
         except Exception as exc:
             print(f"Telegram webhook registration failed: {exc}")
 
@@ -222,6 +223,7 @@ def premium_invoice(x_telegram_init_data: str = Header(default="")):
 
 @app.post("/api/telegram/webhook")
 def telegram_webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(default="")):
+    print("Telegram webhook received")
     if not TELEGRAM_WEBHOOK_SECRET:
         raise HTTPException(503, "TELEGRAM_WEBHOOK_SECRET is not configured")
     if not hmac.compare_digest(x_telegram_bot_api_secret_token, TELEGRAM_WEBHOOK_SECRET):
